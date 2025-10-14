@@ -7,6 +7,7 @@ use std::{
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use ratatui::{
     Frame,
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -32,17 +33,23 @@ fn main() {
     };
 
     let root = Node::from_value(json);
-    let mut state = State::new(root);
+    let mut state = Ctx::new(root);
     state.build_visible_lines();
 
     let mut terminal = ratatui::init();
     loop {
+        let viewport_height = terminal
+            .size()
+            .expect("failed to get terminal size")
+            .height
+            .saturating_sub(2) as usize; // Subtract 2 for borders
+
         terminal
             .draw(|frame| draw(frame, &state))
             .expect("failed to draw frame");
 
         if let Event::Key(key) = event::read().expect("failed to read event") {
-            if handle_key_event(&mut state, key) {
+            if handle_key_event(&mut state, key, viewport_height) {
                 break;
             }
         }
@@ -50,18 +57,20 @@ fn main() {
     ratatui::restore();
 }
 
-struct State {
+struct Ctx {
     root: Node,
     cursor: usize,
     visible_lines: Vec<DisplayLine>,
+    scroll_offset: usize,
 }
 
-impl State {
+impl Ctx {
     fn new(root: Node) -> Self {
         Self {
             root,
             cursor: 0,
             visible_lines: Vec::new(),
+            scroll_offset: 0,
         }
     }
 
@@ -90,6 +99,23 @@ impl State {
         }
     }
 
+    fn page_up(&mut self, page_size: usize) {
+        self.cursor = self.cursor.saturating_sub(page_size);
+    }
+
+    fn page_down(&mut self, num_lines: usize, page_size: usize) {
+        self.cursor = (self.cursor + page_size).min(num_lines.saturating_sub(1));
+    }
+
+    /// Clamps the cursor to the viewport
+    fn adjust_scroll(&mut self, viewport_height: usize) {
+        if self.cursor < self.scroll_offset {
+            self.scroll_offset = self.cursor;
+        } else if self.cursor >= self.scroll_offset + viewport_height {
+            self.scroll_offset = self.cursor - viewport_height + 1;
+        }
+    }
+
     fn collapse_current(&mut self) {
         let mut line_counter = 0;
         self.root
@@ -97,7 +123,7 @@ impl State {
     }
 }
 
-fn handle_key_event(state: &mut State, key: KeyEvent) -> bool {
+fn handle_key_event(state: &mut Ctx, key: KeyEvent, viewport_height: usize) -> bool {
     let num_lines = state.get_visible_lines().len();
     let mut dirty = false;
 
@@ -105,6 +131,8 @@ fn handle_key_event(state: &mut State, key: KeyEvent) -> bool {
         KeyCode::Char('q') | KeyCode::Esc => return true,
         KeyCode::Up | KeyCode::Char('k') => state.move_cursor_up(),
         KeyCode::Down | KeyCode::Char('j') => state.move_cursor_down(num_lines),
+        KeyCode::PageUp => state.page_up(viewport_height),
+        KeyCode::PageDown => state.page_down(num_lines, viewport_height),
         KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Right | KeyCode::Char('l') => {
             state.toggle_current();
             dirty = true;
@@ -121,17 +149,30 @@ fn handle_key_event(state: &mut State, key: KeyEvent) -> bool {
         state.build_visible_lines();
     }
 
+    state.adjust_scroll(viewport_height);
+
     false
 }
 
-fn draw(frame: &mut Frame, state: &State) {
-    let display_lines = state.get_visible_lines();
+fn viewport_height(area: Rect) -> usize {
+    // subtracts 2px, one for each border for the top and bottom
+    area.height.saturating_sub(2) as usize
+}
+
+fn draw(frame: &mut Frame, ctx: &Ctx) {
+    let display_lines = ctx.get_visible_lines();
+    let viewport_height = viewport_height(frame.area());
+
+    let start = ctx.scroll_offset;
+    let end = (start + viewport_height).min(display_lines.len());
+
     let mut lines: Vec<Line> = Vec::new();
 
-    for (i, display_line) in display_lines.iter().enumerate() {
+    for (i, display_line) in display_lines[start..end].iter().enumerate() {
+        let actual_line_index = start + i;
         let mut line_spans = display_line.spans.clone();
 
-        if i == state.cursor {
+        if actual_line_index == ctx.cursor {
             line_spans.insert(
                 0,
                 Span::styled(
@@ -152,7 +193,8 @@ fn draw(frame: &mut Frame, state: &State) {
         lines.push(Line::from(line_spans));
     }
 
-    let title = " ↑↓/jk: navigate, Enter/Space/→/l: expand, ←/h: collapse, q/Esc: quit";
+    let title =
+        " ↑↓/jk: navigate, PgUp/PgDn: page, Enter/Space/→/l: expand, ←/h: collapse, q/Esc: quit";
     let paragraph =
         Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL));
 
