@@ -1,3 +1,9 @@
+use std::{
+    fs::File,
+    io::{IsTerminal, Read},
+    ops::Not,
+};
+
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use ratatui::{
     Frame,
@@ -11,19 +17,21 @@ use crate::node::{DisplayLine, Node};
 mod node;
 
 fn main() {
-    let example = "{
-        \"name\": \"John\",
-        \"age\": 30,
-        \"city\": \"New York\",
-        \"hobbies\": [\"reading\", \"cycling\"],
-        \"address\": {
-            \"street\": \"123 Main St\",
-            \"zip\": \"10001\"
-        }
-    }";
+    let stdin = std::io::stdin();
+    let piped_input = stdin.is_terminal().not();
+    let json = if piped_input {
+        println!("Reading from stdin");
+        let mut buf = Vec::with_capacity(1024);
+        stdin.lock().read_to_end(&mut buf).unwrap();
+        serde_json::from_slice(&buf).unwrap()
+    } else {
+        let mut args = std::env::args_os().skip(1);
+        let path = args.next().unwrap();
+        let mut file = File::open(&path).unwrap();
+        serde_json::from_reader(&mut file).unwrap()
+    };
 
-    let serde_value: serde_json::Value = serde_json::from_str(example).expect("Invalid JSON");
-    let root = Node::from_value(serde_value);
+    let root = Node::from_value(json);
     let mut state = State::new(root);
     state.build_visible_lines();
 
