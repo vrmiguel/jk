@@ -25,6 +25,7 @@ fn main() {
     let serde_value: serde_json::Value = serde_json::from_str(example).expect("Invalid JSON");
     let root = Node::from_value(serde_value);
     let mut state = State::new(root);
+    state.build_visible_lines();
 
     let mut terminal = ratatui::init();
     loop {
@@ -44,15 +45,24 @@ fn main() {
 struct State {
     root: Node,
     cursor: usize,
+    visible_lines: Vec<DisplayLine>,
 }
 
 impl State {
     fn new(root: Node) -> Self {
-        Self { root, cursor: 0 }
+        Self {
+            root,
+            cursor: 0,
+            visible_lines: Vec::new(),
+        }
     }
 
-    fn get_visible_lines(&self) -> Vec<DisplayLine> {
-        self.root.render_lines(0)
+    fn build_visible_lines(&mut self) {
+        self.visible_lines = self.root.render_lines();
+    }
+
+    fn get_visible_lines(&self) -> &[DisplayLine] {
+        &self.visible_lines
     }
 
     fn toggle_current(&mut self) {
@@ -81,19 +91,28 @@ impl State {
 
 fn handle_key_event(state: &mut State, key: KeyEvent) -> bool {
     let num_lines = state.get_visible_lines().len();
+    let mut dirty = false;
 
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => return true,
         KeyCode::Up | KeyCode::Char('k') => state.move_cursor_up(),
         KeyCode::Down | KeyCode::Char('j') => state.move_cursor_down(num_lines),
         KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Right | KeyCode::Char('l') => {
-            state.toggle_current()
+            state.toggle_current();
+            dirty = true;
         }
         KeyCode::Left | KeyCode::Char('h') => {
+            // TODO(vini): drop this, keep only toggling?
             state.collapse_current();
+            dirty = true;
         }
         _ => {}
     }
+
+    if dirty {
+        state.build_visible_lines();
+    }
+
     false
 }
 
@@ -101,8 +120,8 @@ fn draw(frame: &mut Frame, state: &State) {
     let display_lines = state.get_visible_lines();
     let mut lines: Vec<Line> = Vec::new();
 
-    for (i, display_line) in display_lines.into_iter().enumerate() {
-        let mut line_spans = display_line.spans;
+    for (i, display_line) in display_lines.iter().enumerate() {
+        let mut line_spans = display_line.spans.clone();
 
         if i == state.cursor {
             line_spans.insert(

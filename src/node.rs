@@ -67,9 +67,9 @@ impl Node {
         }
     }
 
-    pub fn render_lines(&self, indent: usize) -> Vec<DisplayLine> {
+    pub fn render_lines(&self) -> Vec<DisplayLine> {
         let mut lines = Vec::new();
-        let indent_str = "  ".repeat(indent);
+        let indent = 0;
 
         match self {
             Node::Object { is_collapsed, .. } => {
@@ -87,10 +87,7 @@ impl Node {
                     });
                     lines.extend(self.render_contents(indent + 1));
                     lines.push(DisplayLine {
-                        spans: vec![
-                            Span::raw(indent_str),
-                            Span::styled("}", Style::default().fg(Color::Gray)),
-                        ],
+                        spans: vec![Span::styled("}", Style::default().fg(Color::Gray))],
                     });
                 }
             }
@@ -109,10 +106,7 @@ impl Node {
                     });
                     lines.extend(self.render_contents(indent + 1));
                     lines.push(DisplayLine {
-                        spans: vec![
-                            Span::raw(indent_str),
-                            Span::styled("]", Style::default().fg(Color::Gray)),
-                        ],
+                        spans: vec![Span::styled("]", Style::default().fg(Color::Gray))],
                     });
                 }
             }
