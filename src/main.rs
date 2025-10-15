@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{IsTerminal, Read},
+    io::{BufReader, IsTerminal, Read},
     ops::Not,
 };
 
@@ -28,13 +28,14 @@ fn main() {
     } else {
         let mut args = std::env::args_os().skip(1);
         let path = args.next().unwrap();
-        let mut file = File::open(&path).unwrap();
-        serde_json::from_reader(&mut file).unwrap()
+        let file = File::open(&path).unwrap();
+        let mut reader = BufReader::new(file);
+        serde_json::from_reader(&mut reader).unwrap()
     };
 
     let root = Node::from_value(json);
-    let mut state = Ctx::new(root);
-    state.build_visible_lines();
+    let mut ctx = Ctx::new(root);
+    ctx.build_visible_lines();
 
     let mut terminal = ratatui::init();
     loop {
@@ -45,11 +46,11 @@ fn main() {
             .saturating_sub(2) as usize; // Subtract 2 for borders
 
         terminal
-            .draw(|frame| draw(frame, &state))
+            .draw(|frame| draw(frame, &ctx))
             .expect("failed to draw frame");
 
         if let Event::Key(key) = event::read().expect("failed to read event") {
-            if handle_key_event(&mut state, key, viewport_height) {
+            if ctx.handle_key_event(key, viewport_height) {
                 break;
             }
         }
@@ -121,37 +122,37 @@ impl Ctx {
         self.root
             .collapse_at_line_if_expanded(self.cursor, &mut line_counter);
     }
-}
 
-fn handle_key_event(state: &mut Ctx, key: KeyEvent, viewport_height: usize) -> bool {
-    let num_lines = state.get_visible_lines().len();
-    let mut dirty = false;
+    fn handle_key_event(&mut self, key: KeyEvent, viewport_height: usize) -> bool {
+        let num_lines = self.get_visible_lines().len();
+        let mut dirty = false;
 
-    match key.code {
-        KeyCode::Char('q') | KeyCode::Esc => return true,
-        KeyCode::Up | KeyCode::Char('k') => state.move_cursor_up(),
-        KeyCode::Down | KeyCode::Char('j') => state.move_cursor_down(num_lines),
-        KeyCode::PageUp => state.page_up(viewport_height),
-        KeyCode::PageDown => state.page_down(num_lines, viewport_height),
-        KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Right | KeyCode::Char('l') => {
-            state.toggle_current();
-            dirty = true;
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => return true,
+            KeyCode::Up | KeyCode::Char('k') => self.move_cursor_up(),
+            KeyCode::Down | KeyCode::Char('j') => self.move_cursor_down(num_lines),
+            KeyCode::PageUp => self.page_up(viewport_height),
+            KeyCode::PageDown => self.page_down(num_lines, viewport_height),
+            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Right | KeyCode::Char('l') => {
+                self.toggle_current();
+                dirty = true;
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                // TODO(vini): drop this, keep only toggling?
+                self.collapse_current();
+                dirty = true;
+            }
+            _ => {}
         }
-        KeyCode::Left | KeyCode::Char('h') => {
-            // TODO(vini): drop this, keep only toggling?
-            state.collapse_current();
-            dirty = true;
+
+        if dirty {
+            self.build_visible_lines();
         }
-        _ => {}
+
+        self.adjust_scroll(viewport_height);
+
+        false
     }
-
-    if dirty {
-        state.build_visible_lines();
-    }
-
-    state.adjust_scroll(viewport_height);
-
-    false
 }
 
 fn viewport_height(area: Rect) -> usize {
