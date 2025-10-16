@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-color-eyre = "0.6.5"
+anyhow = "1.0.100"
 crossterm = { version = "0.28.1", features = ["use-dev-tty"] }
 ratatui = "0.29.0"
 serde_json = "1.0"

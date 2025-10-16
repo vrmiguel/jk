@@ -4,6 +4,7 @@ use std::{
     ops::Not,
 };
 
+use anyhow::Context;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use ratatui::{
     Frame,
@@ -17,52 +18,13 @@ use crate::node::{DisplayLine, Node};
 
 mod node;
 
-fn main() {
-    let stdin = std::io::stdin();
-    let piped_input = stdin.is_terminal().not();
-    let json = if piped_input {
-        println!("Reading from stdin");
-        let mut buf = Vec::with_capacity(1024);
-        stdin.lock().read_to_end(&mut buf).unwrap();
-        serde_json::from_slice(&buf).unwrap()
-    } else {
-        let mut args = std::env::args_os().skip(1);
-        let path = args.next().unwrap();
-        let file = File::open(&path).unwrap();
-        let mut reader = BufReader::new(file);
-        serde_json::from_reader(&mut reader).unwrap()
-    };
-
-    let root = Node::from_value(json);
-    let mut ctx = Ctx::new(root);
-    ctx.build_visible_lines();
-
-    let mut terminal = ratatui::init();
-    loop {
-        let viewport_height = terminal
-            .size()
-            .expect("failed to get terminal size")
-            .height
-            .saturating_sub(2) as usize; // Subtract 2 for borders
-
-        terminal
-            .draw(|frame| draw(frame, &ctx))
-            .expect("failed to draw frame");
-
-        if let Event::Key(key) = event::read().expect("failed to read event") {
-            if ctx.handle_key_event(key, viewport_height) {
-                break;
-            }
-        }
-    }
-    ratatui::restore();
-}
-
 struct Ctx {
     root: Node,
     cursor: usize,
     visible_lines: Vec<DisplayLine>,
     scroll_offset: usize,
+    /// Viewport height as per the last frame rendered
+    viewport_height: usize,
 }
 
 impl Ctx {
@@ -72,6 +34,7 @@ impl Ctx {
             cursor: 0,
             visible_lines: Vec::new(),
             scroll_offset: 0,
+            viewport_height: 0,
         }
     }
 
@@ -109,11 +72,11 @@ impl Ctx {
     }
 
     /// Clamps the cursor to the viewport
-    fn adjust_scroll(&mut self, viewport_height: usize) {
+    fn adjust_scroll(&mut self) {
         if self.cursor < self.scroll_offset {
             self.scroll_offset = self.cursor;
-        } else if self.cursor >= self.scroll_offset + viewport_height {
-            self.scroll_offset = self.cursor - viewport_height + 1;
+        } else if self.cursor >= self.scroll_offset + self.viewport_height {
+            self.scroll_offset = self.cursor - self.viewport_height + 1;
         }
     }
 
@@ -123,7 +86,7 @@ impl Ctx {
             .collapse_at_line_if_expanded(self.cursor, &mut line_counter);
     }
 
-    fn handle_key_event(&mut self, key: KeyEvent, viewport_height: usize) -> bool {
+    fn handle_key_event(&mut self, key: KeyEvent) -> bool {
         let num_lines = self.get_visible_lines().len();
         let mut dirty = false;
 
@@ -131,8 +94,8 @@ impl Ctx {
             KeyCode::Char('q') | KeyCode::Esc => return true,
             KeyCode::Up | KeyCode::Char('k') => self.move_cursor_up(),
             KeyCode::Down | KeyCode::Char('j') => self.move_cursor_down(num_lines),
-            KeyCode::PageUp => self.page_up(viewport_height),
-            KeyCode::PageDown => self.page_down(num_lines, viewport_height),
+            KeyCode::PageUp => self.page_up(self.viewport_height),
+            KeyCode::PageDown => self.page_down(num_lines, self.viewport_height),
             KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Right | KeyCode::Char('l') => {
                 self.toggle_current();
                 dirty = true;
@@ -149,10 +112,50 @@ impl Ctx {
             self.build_visible_lines();
         }
 
-        self.adjust_scroll(viewport_height);
+        self.adjust_scroll();
 
         false
     }
+}
+
+fn main() -> anyhow::Result<()> {
+    let stdin = std::io::stdin();
+    let piped_input = stdin.is_terminal().not();
+    let json = if piped_input {
+        let mut buf = Vec::with_capacity(1024);
+        stdin.lock().read_to_end(&mut buf).unwrap();
+        serde_json::from_slice(&buf).unwrap()
+    } else {
+        let mut args = std::env::args_os().skip(1);
+        let path = args.next().context("no path provided")?;
+        let file = File::open(&path)
+            .with_context(|| format!("failed to open file: {}", path.display()))?;
+        let mut reader = BufReader::new(file);
+        serde_json::from_reader(&mut reader).unwrap()
+    };
+
+    let root = Node::from_value(json);
+    let mut ctx = Ctx::new(root);
+    ctx.build_visible_lines();
+
+    let mut terminal = ratatui::init();
+    loop {
+        terminal
+            .draw(|frame| {
+                let viewport_height = viewport_height(frame.area());
+                ctx.viewport_height = viewport_height;
+                draw(frame, &ctx);
+            })
+            .expect("failed to draw frame");
+
+        if let Event::Key(key) = event::read().expect("failed to read event") {
+            if ctx.handle_key_event(key) {
+                break;
+            }
+        }
+    }
+    ratatui::restore();
+    Ok(())
 }
 
 fn viewport_height(area: Rect) -> usize {
@@ -162,10 +165,9 @@ fn viewport_height(area: Rect) -> usize {
 
 fn draw(frame: &mut Frame, ctx: &Ctx) {
     let display_lines = ctx.get_visible_lines();
-    let viewport_height = viewport_height(frame.area());
 
     let start = ctx.scroll_offset;
-    let end = (start + viewport_height).min(display_lines.len());
+    let end = (start + ctx.viewport_height).min(display_lines.len());
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -196,6 +198,7 @@ fn draw(frame: &mut Frame, ctx: &Ctx) {
 
     let title =
         " ↑↓/jk: navigate, PgUp/PgDn: page, Enter/Space/→/l: expand, ←/h: collapse, q/Esc: quit";
+
     let paragraph =
         Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL));
 
