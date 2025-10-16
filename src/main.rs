@@ -60,7 +60,7 @@ fn main() -> anyhow::Result<()> {
 
     let (command, path): (Command, PathBuf) = match (command, path) {
         (None, None) | (Some(Command::Help), _) => {
-            println!("Usage: jv [command] [path]");
+            println!("Usage: jk [command] [path]");
             return Ok(());
         }
         (Some(command), Some(path)) => (command, path.into()),
