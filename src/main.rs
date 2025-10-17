@@ -1,15 +1,16 @@
 use std::{
-    fmt::Display,
     fs::File,
     io::{BufReader, IsTerminal, Read},
     ops::Not,
     path::PathBuf,
+    time::Instant,
 };
 
 use crate::node::Node;
 use anyhow::Context;
 use lexopt::Arg;
 
+#[derive(Debug)]
 enum Command {
     View,
     Flatten,
@@ -17,17 +18,9 @@ enum Command {
     Help,
 }
 
-impl Display for Command {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Command::View => write!(f, "view"),
-            Command::Flatten => write!(f, "flatten"),
-            Command::Unflatten => write!(f, "unflatten"),
-            Command::Help => write!(f, "help"),
-        }
-    }
-}
-
+/// Prints a flattened version of the loaded JSON
+mod flatten;
+/// A version of serde_json::Value that tracks which parts of it are collapsed/expanded
 mod node;
 /// The interactive TUI JSON viewer
 mod viewer;
@@ -67,7 +60,7 @@ fn main() -> anyhow::Result<()> {
         (None, Some(path)) => (Command::View, path.into()),
         (Some(command), None) => {
             return Err(lexopt::Error::MissingValue {
-                option: Some(command.to_string()),
+                option: Some(format!("{:?}", command)),
             }
             .into());
         }
@@ -76,26 +69,29 @@ fn main() -> anyhow::Result<()> {
     let json = if piped_input {
         let mut buf = Vec::with_capacity(1024);
         stdin.lock().read_to_end(&mut buf).unwrap();
+        let utf8_error = std::str::from_utf8(&buf).unwrap();
+        eprintln!("{utf8_error}");
         serde_json::from_slice(&buf).unwrap()
     } else {
+        let now = Instant::now();
         let file = File::open(&path)
             .with_context(|| format!("failed to open file: {}", path.display()))?;
         let mut reader = BufReader::new(file);
-        serde_json::from_reader(&mut reader).unwrap()
+        let json = serde_json::from_reader(&mut reader).unwrap();
+        let elapsed = now.elapsed();
+        eprintln!("Time taken to load JSON: {:?}ms", elapsed.as_millis());
+        json
     };
-
-    let root = Node::from_value(json);
 
     match command {
         Command::View => {
+            let root = Node::from_value(json);
             viewer::start_viewer(root)?;
         }
         Command::Flatten => {
-            todo!()
+            flatten::flatten(json);
         }
-        Command::Unflatten => {
-            todo!()
-        }
+        Command::Unflatten => {}
         Command::Help => {
             unreachable!()
         }

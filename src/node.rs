@@ -67,6 +67,7 @@ impl Node {
         }
     }
 
+    // TODO(vini): all rendering-related logic should be moved to viewer.rs
     pub fn render_lines(&self) -> Vec<DisplayLine> {
         let mut lines = Vec::new();
         let indent = 0;
@@ -120,6 +121,7 @@ impl Node {
         lines
     }
 
+    // TODO(vini): all rendering-related logic should be moved to viewer.rs
     fn render_contents(&self, indent: usize) -> Vec<DisplayLine> {
         let mut lines = Vec::new();
         let indent_str = "  ".repeat(indent);
