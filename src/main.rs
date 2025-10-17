@@ -6,7 +6,7 @@ use std::{
     time::Instant,
 };
 
-use crate::node::Node;
+use crate::{node::Node, utils::is_stdin_readable};
 use anyhow::Context;
 use lexopt::Arg;
 
@@ -22,12 +22,13 @@ enum Command {
 mod flatten;
 /// A version of serde_json::Value that tracks which parts of it are collapsed/expanded
 mod node;
+mod utils;
 /// The interactive TUI JSON viewer
 mod viewer;
 
 fn main() -> anyhow::Result<()> {
     let stdin = std::io::stdin();
-    let piped_input = stdin.is_terminal().not();
+    let piped_input = is_stdin_readable();
     let mut parser = lexopt::Parser::from_env();
 
     let mut command = None;
