@@ -1,14 +1,14 @@
 use std::{
     fs::File,
-    io::{BufReader, IsTerminal, Read},
-    ops::Not,
+    io::{BufReader, Read},
     path::PathBuf,
     time::Instant,
 };
 
-use crate::{node::Node, utils::is_stdin_readable};
 use anyhow::Context;
 use lexopt::Arg;
+
+use crate::{node::Node, utils::is_stdin_readable};
 
 #[derive(Debug)]
 enum Command {
@@ -90,7 +90,7 @@ fn main() -> anyhow::Result<()> {
             viewer::start_viewer(root)?;
         }
         Command::Flatten => {
-            flatten::flatten(json);
+            flatten::flatten(json)?;
         }
         Command::Unflatten => {}
         Command::Help => {
