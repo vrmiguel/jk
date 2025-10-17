@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufReader, Read},
+    io::{self, BufReader, Read},
     time::Instant,
 };
 
@@ -21,12 +21,13 @@ enum Command {
 mod flatten;
 /// A version of serde_json::Value that tracks which parts of it are collapsed/expanded
 mod node;
+/// Reverts `jk flatten` to its original form
+mod unflatten;
 mod utils;
 /// The interactive TUI JSON viewer
 mod viewer;
 
 fn main() -> anyhow::Result<()> {
-    let stdin = std::io::stdin();
     let piped_input = is_stdin_readable();
     let mut parser = lexopt::Parser::from_env();
 
@@ -87,7 +88,7 @@ fn main() -> anyhow::Result<()> {
     } else {
         debug_assert!(piped_input);
         let mut buf = Vec::with_capacity(1024);
-        stdin.lock().read_to_end(&mut buf).unwrap();
+        io::stdin().lock().read_to_end(&mut buf).unwrap();
         serde_json::from_slice(&buf).unwrap()
     };
 

@@ -29,6 +29,7 @@ impl Display for Escaped<'_> {
 }
 
 /// A struct whose Display impl prints out the flattened version of this [Value].
+// TODO: the next step here, in terms of performance, is to implement this using a SAX/streaming parser
 pub struct Flattened<'a> {
     val: &'a serde_json::Value,
 }
