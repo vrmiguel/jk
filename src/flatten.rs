@@ -89,6 +89,7 @@ impl Display for Flattened<'_> {
     }
 }
 
+// TODO: try to do with serde's StreamDeserializer
 /// Displays a flattened version of a JSON object
 pub fn flatten(value: serde_json::Value) -> anyhow::Result<()> {
     let stdout = stdout();

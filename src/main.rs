@@ -1,7 +1,6 @@
 use std::{
     fs::File,
     io::{BufReader, Read},
-    path::PathBuf,
     time::Instant,
 };
 
@@ -34,6 +33,7 @@ fn main() -> anyhow::Result<()> {
     let mut command = None;
     let mut path = None;
 
+    // TODO: if `piped_input`, conflict if `path` is provided? just ignore the piped input?
     while let Some(arg) = parser.next()? {
         match arg {
             Arg::Value(value) if value == "flatten" && command.is_none() => {
@@ -52,28 +52,30 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let (command, path): (Command, PathBuf) = match (command, path) {
-        (None, None) | (Some(Command::Help), _) => {
-            println!("Usage: jk [command] [path]");
+    // This is a bit unsightly, but the idea is to allow the `path` argument to not be required if the input is piped.
+    // Also, if no specific command is provided, the default is to view the JSON interactively
+    let (command, path) = match (command, path) {
+        (Some(Command::Help), _) => {
+            help_message();
+            return Ok(());
+        }
+        (None, None) if !piped_input => {
+            help_message();
             return Ok(());
         }
         (Some(command), Some(path)) => (command, path.into()),
-        (None, Some(path)) => (Command::View, path.into()),
-        (Some(command), None) => {
+        (None, Some(path)) => (Command::View, Some(path.into())),
+        (Some(command), None) if !piped_input => {
             return Err(lexopt::Error::MissingValue {
                 option: Some(format!("{:?}", command)),
             }
             .into());
         }
+        (Some(command), None) => (command, None),
+        (None, None) => (Command::View, None),
     };
 
-    let json = if piped_input {
-        let mut buf = Vec::with_capacity(1024);
-        stdin.lock().read_to_end(&mut buf).unwrap();
-        let utf8_error = std::str::from_utf8(&buf).unwrap();
-        eprintln!("{utf8_error}");
-        serde_json::from_slice(&buf).unwrap()
-    } else {
+    let json = if let Some(path) = path {
         let now = Instant::now();
         let file = File::open(&path)
             .with_context(|| format!("failed to open file: {}", path.display()))?;
@@ -82,6 +84,11 @@ fn main() -> anyhow::Result<()> {
         let elapsed = now.elapsed();
         eprintln!("Time taken to load JSON: {:?}ms", elapsed.as_millis());
         json
+    } else {
+        debug_assert!(piped_input);
+        let mut buf = Vec::with_capacity(1024);
+        stdin.lock().read_to_end(&mut buf).unwrap();
+        serde_json::from_slice(&buf).unwrap()
     };
 
     match command {
@@ -99,4 +106,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn help_message() {
+    // TODO: flesh this out
+    println!("Usage: jk [command] [path]");
 }
