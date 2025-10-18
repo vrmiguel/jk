@@ -13,6 +13,7 @@ enum Command {
     Help,
 }
 
+mod borrowed_value;
 /// Prints a flattened version of the loaded JSON
 mod flatten;
 /// A version of serde_json::Value that tracks which parts of it are collapsed/expanded

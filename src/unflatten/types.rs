@@ -1,3 +1,5 @@
+use crate::borrowed_value::Value;
+
 #[cfg_attr(test, derive(PartialEq, Debug))]
 pub struct GronLine<'a> {
     pub identifier: Vec<Identifier<'a>>,
@@ -19,6 +21,7 @@ pub enum Index<'a> {
 }
 
 #[cfg_attr(test, derive(PartialEq, Debug))]
+#[derive(Clone, Copy)]
 pub enum GronValue<'a> {
     // `json = {};`
     Object,
@@ -34,19 +37,15 @@ pub enum GronValue<'a> {
     Null,
 }
 
-impl GronValue<'_> {
-    pub fn to_serde(&self) -> serde_json::Value {
+impl<'a> GronValue<'a> {
+    pub fn to_value(self) -> Value<'a> {
         match self {
-            GronValue::Object => serde_json::Value::Object(serde_json::Map::new()),
-            GronValue::Array => serde_json::Value::Array(Vec::new()),
-            GronValue::String(val) => serde_json::Value::String(val.to_string()),
-            GronValue::Number(num) => {
-                let num: f64 = num.parse().unwrap();
-                let num = serde_json::Number::from_f64(num).unwrap();
-                serde_json::Value::Number(num)
-            }
-            GronValue::Boolean(b) => serde_json::Value::Bool(*b),
-            GronValue::Null => serde_json::Value::Null,
+            GronValue::Object => Value::object(),
+            GronValue::Array => Value::array(),
+            GronValue::String(val) => Value::String(val),
+            GronValue::Number(num) => Value::Number(num),
+            GronValue::Boolean(b) => Value::Bool(b),
+            GronValue::Null => Value::Null,
         }
     }
 }

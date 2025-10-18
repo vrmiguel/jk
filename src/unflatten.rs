@@ -1,8 +1,9 @@
+use std::io::{stdout, BufWriter, Write};
 use std::ops::Not;
 
 use anyhow::Context;
-use serde_json::{Map, Number, Value};
 
+use crate::borrowed_value::Value;
 use crate::unflatten::{
     parser::parse_gron_line,
     types::{GronLine, GronValue, Index},
@@ -13,6 +14,7 @@ mod types;
 
 type Result<T = ()> = std::result::Result<T, Error>;
 
+/// This is mostly because `nom` errors are unwieldy, and cannot interface with `anyhow`, at least as far as I can tell
 #[derive(Debug)]
 pub struct Error(String);
 
@@ -24,11 +26,21 @@ impl From<nom::Err<nom::error::Error<&str>>> for Error {
 
 impl From<anyhow::Error> for Error {
     fn from(value: anyhow::Error) -> Self {
-        Error(value.to_string())
+        Error(format!("{value:?}"))
     }
 }
 
-pub fn unflatten<'a>(mut input: &'a str) -> Result {
+pub fn unflatten(input: &str) -> Result {
+    let value = unflatten_to_value(input)?;
+    let mut writer = BufWriter::new(stdout().lock());
+    serde_json::to_writer_pretty(&mut writer, &value)
+        .with_context(|| "failed to print out JSON")?;
+    writer.flush().with_context(|| "failed to flush output")?;
+
+    Ok(())
+}
+
+pub fn unflatten_to_value<'a>(mut input: &'a str) -> Result<Value<'a>> {
     let mut root;
     let (rest, first_line) = parse_gron_line(input)?;
     input = rest;
@@ -39,23 +51,11 @@ pub fn unflatten<'a>(mut input: &'a str) -> Result {
         .base;
 
     match first_line.value {
-        GronValue::Object => root = Value::Object(Map::new()),
-        GronValue::Array => root = Value::Array(Vec::new()),
-        GronValue::String(val) => {
-            println!("\"{val}\"");
-            return Ok(());
-        }
-        GronValue::Number(num) => {
-            println!("{num}");
-            return Ok(());
-        }
-        GronValue::Boolean(boolean) => {
-            println!("{boolean}");
-            return Ok(());
-        }
-        GronValue::Null => {
-            println!("null");
-            return Ok(());
+        GronValue::Object => root = Value::object(),
+        GronValue::Array => root = Value::array(),
+        _other => {
+            // For scalar root values, just return them directly
+            return Ok(first_line.value.to_value());
         }
     }
 
@@ -89,19 +89,16 @@ pub fn unflatten<'a>(mut input: &'a str) -> Result {
                                 while arr.len() <= idx {
                                     arr.push(Value::Null); // Fill gaps with null
                                 }
-                                arr[idx] = value.to_serde();
+                                arr[idx] = value.to_value();
                             }
                             Index::String(key) => {
-                                entry
-                                    .as_object_mut()
-                                    .unwrap()
-                                    .insert(key.to_string(), value.to_serde());
+                                entry.as_object_mut().unwrap().insert(key, value.to_value());
                             }
                         }
                     }
                     None => {
                         let obj = entry.as_object_mut().unwrap();
-                        obj.insert(component.base.to_string(), value.to_serde());
+                        obj.insert(component.base, value.to_value());
                     }
                 }
             } else {
@@ -110,19 +107,17 @@ pub fn unflatten<'a>(mut input: &'a str) -> Result {
                 }
             }
         }
+    
     }
 
-    let res = serde_json::to_string_pretty(&root).unwrap();
-    println!("{res}");
-
-    Ok(())
+    Ok(root)
 }
 
-fn navigate_to<'a>(
-    entry: &'a mut Value,
+fn navigate_to<'data, 'borrow>(
+    entry: &'borrow mut Value<'data>,
     base: &str,
     index: Option<Index<'_>>,
-) -> Result<&'a mut Value> {
+) -> Result<&'borrow mut Value<'data>> {
     // First navigate to base (object key lookup)
     let entry = entry
         .as_object_mut()
@@ -133,7 +128,10 @@ fn navigate_to<'a>(
     apply_index(entry, index)
 }
 
-fn apply_index<'a>(entry: &'a mut Value, index: Option<Index<'_>>) -> Result<&'a mut Value> {
+fn apply_index<'data, 'borrow>(
+    entry: &'borrow mut Value<'data>,
+    index: Option<Index<'_>>,
+) -> Result<&'borrow mut Value<'data>> {
     match index {
         Some(Index::Numeric(idx)) => {
             let idx: usize = idx
