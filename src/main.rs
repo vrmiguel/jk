@@ -1,8 +1,4 @@
-use std::{
-    fs::File,
-    io::{self, BufReader, Read},
-    time::Instant,
-};
+use std::io::{self, Read};
 
 use anyhow::Context;
 use lexopt::Arg;
@@ -76,31 +72,30 @@ fn main() -> anyhow::Result<()> {
         (None, None) => (Command::View, None),
     };
 
-    let json = if let Some(path) = path {
-        let now = Instant::now();
-        let file = File::open(&path)
-            .with_context(|| format!("failed to open file: {}", path.display()))?;
-        let mut reader = BufReader::new(file);
-        let json = serde_json::from_reader(&mut reader).unwrap();
-        let elapsed = now.elapsed();
-        eprintln!("Time taken to load JSON: {:?}ms", elapsed.as_millis());
-        json
+    let buf = if let Some(path) = path {
+        std::fs::read(&path).with_context(|| format!("failed to read file: {}", path.display()))?
     } else {
         debug_assert!(piped_input);
         let mut buf = Vec::with_capacity(1024);
         io::stdin().lock().read_to_end(&mut buf).unwrap();
-        serde_json::from_slice(&buf).unwrap()
+        buf
     };
 
     match command {
         Command::View => {
+            let json = serde_json::from_slice(&buf).unwrap();
             let root = Node::from_value(json);
             viewer::start_viewer(root)?;
         }
         Command::Flatten => {
+            let json = serde_json::from_slice(&buf).unwrap();
+
             flatten::flatten(json)?;
         }
-        Command::Unflatten => {}
+        Command::Unflatten => {
+            let utf8 = std::str::from_utf8(&buf).unwrap();
+            unflatten::unflatten(utf8).unwrap();
+        }
         Command::Help => {
             unreachable!()
         }

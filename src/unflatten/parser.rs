@@ -18,7 +18,8 @@ pub fn parse_gron_line<'a>(input: &'a str) -> IResult<&'a str, GronLine<'a>> {
     let (rest, identifier) = parse_identifier(input)?;
     let (rest, _) = ws(tag("=")).parse(rest)?;
     let (rest, value) = parse_value(rest)?;
-    let (rest, _) = ws(tag(";")).parse(rest)?;
+    let (rest, _) = tag(";").parse(rest)?;
+    let (rest, _) = opt(tag("\n")).parse(rest)?;
 
     Ok((rest, GronLine { identifier, value }))
 }
@@ -91,8 +92,8 @@ where
 #[cfg(test)]
 mod tests {
     use crate::unflatten::{
-        parser::{parse_identifier_path, parse_value},
-        types::{GronValue, Identifier, Index},
+        parser::{parse_gron_line, parse_identifier_path, parse_value},
+        types::{GronLine, GronValue, Identifier, Index},
     };
 
     fn parse_collect_identifier_path(mut input: &str) -> Vec<Identifier<'_>> {
@@ -108,8 +109,396 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_multiple_lines() {
+        let input = "json = {};\njson.address = {};\njson.address.street = \"123 Main St\";";
+
+        let (rest, line) = parse_gron_line(input).unwrap();
+        assert_eq!(
+            line,
+            GronLine {
+                identifier: vec![Identifier {
+                    base: "json",
+                    index: None
+                },],
+                value: GronValue::Object
+            }
+        );
+        let (rest, line) = parse_gron_line(rest).unwrap();
+        assert_eq!(
+            line,
+            GronLine {
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        index: None
+                    },
+                    Identifier {
+                        base: "address",
+                        index: None
+                    }
+                ],
+                value: GronValue::Object
+            }
+        );
+        let (rest, line) = parse_gron_line(rest).unwrap();
+        assert_eq!(
+            line,
+            GronLine {
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        index: None
+                    },
+                    Identifier {
+                        base: "address",
+                        index: None
+                    },
+                    Identifier {
+                        base: "street",
+                        index: None
+                    }
+                ],
+                value: GronValue::String("123 Main St")
+            }
+        );
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn test_parse_gron_line() {
+        assert_eq!(
+            parse_gron_line("json = {};"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![Identifier {
+                        base: "json",
+                        index: None
+                    }],
+                    value: GronValue::Object
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json = [];"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![Identifier {
+                        base: "json",
+                        index: None
+                    }],
+                    value: GronValue::Array
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.name = \"Alice\";"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "name",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::String("Alice")
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.age = 30;"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "age",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::Number("30")
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.active = true;"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "active",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::Boolean(true)
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.deleted = false;"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "deleted",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::Boolean(false)
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.data = null;"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "data",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::Null
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.items[0] = \"first\";"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "items",
+                            index: Some(Index::Numeric("0"))
+                        },
+                    ],
+                    value: GronValue::String("first")
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json[\"special-key\"] = 42;"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![Identifier {
+                        base: "json",
+                        index: Some(Index::String("special-key"))
+                    },],
+                    value: GronValue::Number("42")
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.users[0].address[\"street name\"] = \"Main St\";"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "users",
+                            index: Some(Index::Numeric("0"))
+                        },
+                        Identifier {
+                            base: "address",
+                            index: Some(Index::String("street name"))
+                        },
+                    ],
+                    value: GronValue::String("Main St")
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.value   =   123;"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "value",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::Number("123")
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.price = 19.99;"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "price",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::Number("19.99")
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.temperature = -5.5;"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "temperature",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::Number("-5.5")
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.large = 1.5e10;"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "large",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::Number("1.5e10")
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.path = \"C:\\\\Users\\\\file.txt\";"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "path",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::String("C:\\\\Users\\\\file.txt")
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.empty = \"\";"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "empty",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::String("")
+                }
+            ))
+        );
+
+        assert_eq!(
+            parse_gron_line("json.address.street = \"123 Main St\";"),
+            Ok((
+                "",
+                GronLine {
+                    identifier: vec![
+                        Identifier {
+                            base: "json",
+                            index: None
+                        },
+                        Identifier {
+                            base: "address",
+                            index: None
+                        },
+                        Identifier {
+                            base: "street",
+                            index: None
+                        },
+                    ],
+                    value: GronValue::String("123 Main St")
+                }
+            ))
+        );
+    }
+
+    #[test]
     fn test_parse_identifier() {
-        // Original test
         assert_eq!(
             parse_collect_identifier_path("json.address[1].test[\"hey\"]"),
             vec![
@@ -128,7 +517,6 @@ mod tests {
             ]
         );
 
-        // Simple root identifier
         assert_eq!(
             parse_collect_identifier_path("json"),
             vec![Identifier {
@@ -137,7 +525,6 @@ mod tests {
             },]
         );
 
-        // Root array access
         assert_eq!(
             parse_collect_identifier_path("json[0]"),
             vec![Identifier {
@@ -146,7 +533,6 @@ mod tests {
             },]
         );
 
-        // Deep nesting with only properties
         assert_eq!(
             parse_collect_identifier_path("json.a.b.c.d"),
             vec![
@@ -173,7 +559,6 @@ mod tests {
             ]
         );
 
-        // String keys with special characters
         assert_eq!(
             parse_collect_identifier_path("json[\"key with spaces\"]"),
             vec![Identifier {
@@ -261,30 +646,19 @@ mod tests {
 
     #[test]
     fn test_parse_value() {
-        // Null
         assert_eq!(parse_value("null"), Ok(("", GronValue::Null)));
-
-        // Booleans
         assert_eq!(parse_value("true"), Ok(("", GronValue::Boolean(true))));
         assert_eq!(parse_value("false"), Ok(("", GronValue::Boolean(false))));
-
-        // Objects and Arrays
         assert_eq!(parse_value("{}"), Ok(("", GronValue::Object)));
         assert_eq!(parse_value("[]"), Ok(("", GronValue::Array)));
-
-        // Numbers - integers
         assert_eq!(parse_value("0"), Ok(("", GronValue::Number("0"))));
         assert_eq!(parse_value("123"), Ok(("", GronValue::Number("123"))));
         assert_eq!(parse_value("-456"), Ok(("", GronValue::Number("-456"))));
-
-        // Numbers - decimals
         assert_eq!(
             parse_value("123.456"),
             Ok(("", GronValue::Number("123.456")))
         );
         assert_eq!(parse_value("-0.5"), Ok(("", GronValue::Number("-0.5"))));
-
-        // Numbers - scientific notation
         assert_eq!(
             parse_value("1.23e10"),
             Ok(("", GronValue::Number("1.23e10")))
@@ -294,21 +668,15 @@ mod tests {
             parse_value("-2.5e+3"),
             Ok(("", GronValue::Number("-2.5e+3")))
         );
-
-        // Strings - simple
         assert_eq!(
             parse_value("\"hello\""),
             Ok(("", GronValue::String("hello")))
         );
         assert_eq!(parse_value("\"\""), Ok(("", GronValue::String(""))));
-
-        // Strings - with spaces
         assert_eq!(
             parse_value("\"hello world\""),
             Ok(("", GronValue::String("hello world")))
         );
-
-        // Strings - with escapes
         assert_eq!(
             parse_value("\"escaped \\\"quotes\\\"\""),
             Ok(("", GronValue::String("escaped \\\"quotes\\\"")))
@@ -321,12 +689,8 @@ mod tests {
             parse_value("\"line1\\nline2\""),
             Ok(("", GronValue::String("line1\\nline2")))
         );
-
-        // With leading whitespace (multispace0 should handle it)
         assert_eq!(parse_value("   true"), Ok(("", GronValue::Boolean(true))));
         assert_eq!(parse_value("\t\t123"), Ok(("", GronValue::Number("123"))));
-
-        // With trailing content (shouldn't be consumed)
         assert_eq!(parse_value("true;"), Ok((";", GronValue::Boolean(true))));
         assert_eq!(
             parse_value("123 // comment"),
