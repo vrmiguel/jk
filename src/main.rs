@@ -23,6 +23,22 @@ enum Source {
     File(PathBuf),
 }
 
+enum SourceIterator {
+    Stdin(io::Bytes<io::StdinLock<'static>>),
+    File(io::Bytes<BufReader<File>>),
+}
+
+impl Iterator for SourceIterator {
+    type Item = Result<u8, io::Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            SourceIterator::Stdin(iter) => iter.next(),
+            SourceIterator::File(iter) => iter.next(),
+        }
+    }
+}
+
 impl Source {
     fn load(self) -> anyhow::Result<Vec<u8>> {
         match self {
@@ -39,15 +55,15 @@ impl Source {
         }
     }
 
-    fn iterator(self) -> anyhow::Result<Box<dyn Iterator<Item = Result<u8, io::Error>>>> {
+    fn iterator(self) -> anyhow::Result<SourceIterator> {
         match self {
-            Source::Stdin => Ok(Box::new(io::stdin().lock().bytes())),
+            Source::Stdin => Ok(SourceIterator::Stdin(io::stdin().lock().bytes())),
             Source::File(path) => {
                 let file = File::open(&path)
                     .with_context(|| format!("failed to open file: {}", path.display()))?;
                 let reader = BufReader::new(file);
-
-                Ok(Box::new(reader.bytes()))
+                
+                Ok(SourceIterator::File(reader.bytes()))
             }
         }
     }
@@ -122,8 +138,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Flatten => {
             let iter = source.iterator()?;
-            let parser: jsax::Parser<io::Error, Box<dyn Iterator<Item = Result<u8, io::Error>>>> =
-                jsax::Parser::new(iter);
+            let parser = jsax::Parser::new(iter);
 
             flatten::flatten(parser)?;
         }

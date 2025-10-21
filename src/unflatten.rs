@@ -1,4 +1,4 @@
-use std::io::{stdout, BufWriter, Write};
+use std::io::{BufWriter, Write, stdout};
 use std::ops::Not;
 
 use anyhow::Context;
@@ -107,7 +107,6 @@ pub fn unflatten_to_value<'a>(mut input: &'a str) -> Result<Value<'a>> {
                 }
             }
         }
-    
     }
 
     Ok(root)

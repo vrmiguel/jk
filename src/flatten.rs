@@ -92,7 +92,7 @@ impl Display for Flattened<'_> {
 }
 
 pub fn flatten(
-    mut parser: jsax::Parser<io::Error, Box<dyn Iterator<Item = Result<u8, io::Error>>>>,
+    mut parser: jsax::Parser<io::Error, impl Iterator<Item = Result<u8, io::Error>>>,
 ) -> anyhow::Result<()> {
     let stdout = stdout();
     let mut writer = BufWriter::new(stdout.lock());
