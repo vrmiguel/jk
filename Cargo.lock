@@ -185,6 +185,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hifijson"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a7763b98ba8a24f59e698bf9ab197e7676c640d6455d1580b4ce7dc560f0f0d"
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -241,11 +247,22 @@ dependencies = [
  "anyhow",
  "crossterm",
  "indexmap",
+ "jsax",
  "lexopt",
  "nom",
  "rapidhash",
  "ratatui",
  "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "jsax"
+version = "0.1.0"
+source = "git+https://github.com/vrmiguel/jsax.git#8401970cb4248586486c4919c78c6d0264ac61d5"
+dependencies = [
+ "hifijson",
  "serde_json",
  "thiserror 2.0.17",
 ]

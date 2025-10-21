@@ -1,4 +1,8 @@
-use std::io::{self, Read};
+use std::{
+    fs::File,
+    io::{self, BufReader, Read},
+    path::PathBuf,
+};
 
 use anyhow::Context;
 use lexopt::Arg;
@@ -11,6 +15,42 @@ enum Command {
     Flatten,
     Unflatten,
     Help,
+}
+
+/// Where to load data from
+enum Source {
+    Stdin,
+    File(PathBuf),
+}
+
+impl Source {
+    fn load(self) -> anyhow::Result<Vec<u8>> {
+        match self {
+            Source::Stdin => {
+                let mut buf = Vec::with_capacity(1024);
+                io::stdin().lock().read_to_end(&mut buf).unwrap();
+                Ok(buf)
+            }
+            Source::File(path) => {
+                let buf = std::fs::read(&path)
+                    .with_context(|| format!("failed to read file: {}", path.display()))?;
+                Ok(buf)
+            }
+        }
+    }
+
+    fn iterator(self) -> anyhow::Result<Box<dyn Iterator<Item = Result<u8, io::Error>>>> {
+        match self {
+            Source::Stdin => Ok(Box::new(io::stdin().lock().bytes())),
+            Source::File(path) => {
+                let file = File::open(&path)
+                    .with_context(|| format!("failed to open file: {}", path.display()))?;
+                let reader = BufReader::new(file);
+
+                Ok(Box::new(reader.bytes()))
+            }
+        }
+    }
 }
 
 mod borrowed_value;
@@ -52,7 +92,7 @@ fn main() -> anyhow::Result<()> {
 
     // This is a bit unsightly, but the idea is to allow the `path` argument to not be required if the input is piped.
     // Also, if no specific command is provided, the default is to view the JSON interactively
-    let (command, path) = match (command, path) {
+    let (command, source) = match (command, path) {
         (Some(Command::Help), _) => {
             help_message();
             return Ok(());
@@ -61,39 +101,34 @@ fn main() -> anyhow::Result<()> {
             help_message();
             return Ok(());
         }
-        (Some(command), Some(path)) => (command, path.into()),
-        (None, Some(path)) => (Command::View, Some(path.into())),
+        (Some(command), Some(path)) => (command, Source::File(path.into())),
+        (None, Some(path)) => (Command::View, Source::File(path.into())),
         (Some(command), None) if !piped_input => {
             return Err(lexopt::Error::MissingValue {
                 option: Some(format!("{:?}", command)),
             }
             .into());
         }
-        (Some(command), None) => (command, None),
-        (None, None) => (Command::View, None),
-    };
-
-    let buf = if let Some(path) = path {
-        std::fs::read(&path).with_context(|| format!("failed to read file: {}", path.display()))?
-    } else {
-        debug_assert!(piped_input);
-        let mut buf = Vec::with_capacity(1024);
-        io::stdin().lock().read_to_end(&mut buf).unwrap();
-        buf
+        (Some(command), None) => (command, Source::Stdin),
+        (None, None) => (Command::View, Source::Stdin),
     };
 
     match command {
         Command::View => {
+            let buf = source.load()?;
             let json = serde_json::from_slice(&buf).unwrap();
             let root = Node::from_value(json);
             viewer::start_viewer(root)?;
         }
         Command::Flatten => {
-            let json = serde_json::from_slice(&buf).unwrap();
+            let iter = source.iterator()?;
+            let parser: jsax::Parser<io::Error, Box<dyn Iterator<Item = Result<u8, io::Error>>>> =
+                jsax::Parser::new(iter);
 
-            flatten::flatten(json)?;
+            flatten::flatten(parser)?;
         }
         Command::Unflatten => {
+            let buf = source.load()?;
             let utf8 = std::str::from_utf8(&buf).unwrap();
             unflatten::unflatten(utf8).unwrap();
         }

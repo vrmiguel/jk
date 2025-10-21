@@ -1,8 +1,9 @@
 use std::{
     fmt::{self, Display, Write},
-    io::{BufWriter, Write as IoWrite, stdout},
+    io::{self, BufWriter, Write as IoWrite, stdout},
 };
 
+use jsax::Event;
 use serde_json::Value;
 
 // TODO: implement other formats. Only `gron` is supported so far.
@@ -90,12 +91,104 @@ impl Display for Flattened<'_> {
     }
 }
 
-// TODO: try to do with serde's StreamDeserializer
-/// Displays a flattened version of a JSON object
-pub fn flatten(value: serde_json::Value) -> anyhow::Result<()> {
+pub fn flatten(
+    mut parser: jsax::Parser<io::Error, Box<dyn Iterator<Item = Result<u8, io::Error>>>>,
+) -> anyhow::Result<()> {
     let stdout = stdout();
     let mut writer = BufWriter::new(stdout.lock());
-    write!(writer, "{}", Flattened { val: &value })?;
+
+    let mut path = String::from("json");
+
+    // Stack of (base_path_length, array_index_if_applicable)
+    let mut stack: Vec<(usize, Option<usize>)> = Vec::new();
+
+    while let Some(event) = parser.parse_next()? {
+        match event {
+            Event::StartObject => {
+                writeln!(writer, "{path} = {{}};")?;
+
+                stack.push((path.len(), None));
+            }
+            Event::StartArray => {
+                writeln!(writer, "{path} = [];")?;
+
+                let base_len = path.len();
+                stack.push((base_len, Some(0)));
+
+                write!(path, "[0]").unwrap();
+            }
+            Event::Key(key) => {
+                if let Some(&(base_len, _)) = stack.last() {
+                    path.truncate(base_len);
+                }
+
+                path.push('.');
+                path.push_str(key);
+            }
+            Event::String(s) => {
+                writeln!(writer, "{path} = \"{s}\";")?;
+
+                if let Some((base_len, array_idx)) = stack.last_mut() {
+                    if let Some(idx) = array_idx {
+                        *idx += 1;
+                        path.truncate(*base_len);
+                        write!(path, "[{}]", idx).unwrap();
+                    } else {
+                        path.truncate(*base_len);
+                    }
+                }
+            }
+            Event::Number(n) => {
+                writeln!(writer, "{path} = {n};")?;
+                if let Some((base_len, array_idx)) = stack.last_mut() {
+                    if let Some(idx) = array_idx {
+                        *idx += 1;
+                        path.truncate(*base_len);
+                        write!(path, "[{}]", idx).unwrap();
+                    } else {
+                        path.truncate(*base_len);
+                    }
+                }
+            }
+            Event::Boolean(b) => {
+                writeln!(writer, "{path} = {b};")?;
+                if let Some((base_len, array_idx)) = stack.last_mut() {
+                    if let Some(idx) = array_idx {
+                        *idx += 1;
+                        path.truncate(*base_len);
+                        write!(path, "[{}]", idx).unwrap();
+                    } else {
+                        path.truncate(*base_len);
+                    }
+                }
+            }
+            Event::Null => {
+                writeln!(writer, "{path} = null;")?;
+                if let Some((base_len, array_idx)) = stack.last_mut() {
+                    if let Some(idx) = array_idx {
+                        *idx += 1;
+                        path.truncate(*base_len);
+                        write!(path, "[{}]", idx).unwrap();
+                    } else {
+                        path.truncate(*base_len);
+                    }
+                }
+            }
+            Event::EndObject { .. } | Event::EndArray { .. } => {
+                stack.pop();
+
+                if let Some((base_len, array_idx)) = stack.last_mut() {
+                    if let Some(idx) = array_idx {
+                        *idx += 1;
+                        path.truncate(*base_len);
+                        write!(path, "[{}]", idx).unwrap();
+                    } else {
+                        path.truncate(*base_len);
+                    }
+                }
+            }
+        }
+    }
 
     Ok(())
 }

@@ -61,22 +61,9 @@ impl<'a> Value<'a> {
         Self::Array(Vec::new())
     }
 
-    pub fn as_object(&self) -> Option<&Map<'_>> {
-        match self {
-            Value::Object(inner) => Some(inner),
-            _ => None,
-        }
-    }
     pub fn as_object_mut(&mut self) -> Option<&mut Map<'a>> {
         match self {
             Value::Object(inner) => Some(inner),
-            _ => None,
-        }
-    }
-
-    pub fn as_array(&self) -> Option<&Vec<Value<'a>>> {
-        match self {
-            Value::Array(inner) => Some(inner),
             _ => None,
         }
     }
