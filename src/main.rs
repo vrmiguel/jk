@@ -3,7 +3,6 @@ use std::{
     process::ExitCode,
 };
 
-use anyhow::anyhow;
 use lexopt::Arg;
 
 use crate::{node::Node, source::Source, utils::is_stdin_readable};
@@ -102,7 +101,7 @@ fn run() -> anyhow::Result<()> {
         }
         Command::Unflatten => {
             let source = source.load()?;
-            unflatten::unflatten(source.as_str()?).map_err(|err| anyhow!(err.0))?;
+            unflatten::unflatten(source.as_str()?)?;
         }
         Command::Help => {
             unreachable!()

@@ -75,6 +75,7 @@ pub enum Event<'a> {
     Null,
 }
 
+#[cold]
 fn unexpected(token: Token<'_>) -> Error {
     Error::Unexpected(token.to_string())
 }
@@ -96,6 +97,7 @@ impl<'source> Parser<'source> {
         }
     }
 
+    #[inline]
     fn consume_colon(&mut self) -> Result<(), Error> {
         match self.context.last_mut() {
             Some(Context::Object {
@@ -109,6 +111,7 @@ impl<'source> Parser<'source> {
         }
     }
 
+    #[inline]
     fn consume_value(&mut self, token: Token) -> Result<(), Error> {
         match self.context.last_mut() {
             Some(Context::Object {
@@ -136,6 +139,7 @@ impl<'source> Parser<'source> {
         }
     }
 
+    #[inline]
     fn consume_comma(&mut self) -> Result<(), Error> {
         match self.context.last_mut() {
             Some(Context::Object {
@@ -164,6 +168,7 @@ impl<'source> Parser<'source> {
         }
     }
 
+    #[allow(unused)]
     /// The range of the last parsed token
     fn span(&self) -> Range<usize> {
         match self.last_token {

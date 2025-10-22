@@ -1,36 +1,18 @@
 use std::io::{BufWriter, Write, stdout};
-use std::ops::Not;
 
 use anyhow::Context;
 
 use crate::borrowed_value::Value;
 use crate::unflatten::{
-    parser::parse_gron_line,
+    parser::Parser,
     types::{GronLine, GronValue, Index},
 };
 
+mod lexer;
 mod parser;
 mod types;
 
-type Result<T = ()> = std::result::Result<T, Error>;
-
-/// This is mostly because `nom` errors are unwieldy, and cannot interface with `anyhow`, at least as far as I can tell
-#[derive(Debug)]
-pub struct Error(pub String);
-
-impl From<nom::Err<nom::error::Error<&str>>> for Error {
-    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
-        Error(value.to_string())
-    }
-}
-
-impl From<anyhow::Error> for Error {
-    fn from(value: anyhow::Error) -> Self {
-        Error(format!("{value:?}"))
-    }
-}
-
-pub fn unflatten(input: &str) -> Result {
+pub fn unflatten(input: &str) -> anyhow::Result<()> {
     let value = unflatten_to_value(input)?;
     let mut writer = BufWriter::new(stdout().lock());
     serde_json::to_writer_pretty(&mut writer, &value)
@@ -40,10 +22,13 @@ pub fn unflatten(input: &str) -> Result {
     Ok(())
 }
 
-pub fn unflatten_to_value<'a>(mut input: &'a str) -> Result<Value<'a>> {
+pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
+    let mut parser = Parser::new(input);
     let mut root;
-    let (rest, first_line) = parse_gron_line(input)?;
-    input = rest;
+    let first_line = parser
+        .parse_next_line()?
+        .with_context(|| "The supplied file was empty!")?;
+
     let root_name = first_line
         .identifier
         .first()
@@ -59,10 +44,7 @@ pub fn unflatten_to_value<'a>(mut input: &'a str) -> Result<Value<'a>> {
         }
     }
 
-    while input.is_empty().not() {
-        let (rest, GronLine { identifier, value }) = parse_gron_line(input)?;
-        input = rest;
-
+    while let Some(GronLine { identifier, value }) = parser.parse_next_line()? {
         // TODO: validate root name
         let components_amount = identifier.len();
         let components = identifier.into_iter().enumerate();
@@ -116,7 +98,7 @@ fn navigate_to<'data, 'borrow>(
     entry: &'borrow mut Value<'data>,
     base: &str,
     index: Option<Index<'_>>,
-) -> Result<&'borrow mut Value<'data>> {
+) -> anyhow::Result<&'borrow mut Value<'data>> {
     // First navigate to base (object key lookup)
     let entry = entry
         .as_object_mut()
@@ -130,7 +112,7 @@ fn navigate_to<'data, 'borrow>(
 fn apply_index<'data, 'borrow>(
     entry: &'borrow mut Value<'data>,
     index: Option<Index<'_>>,
-) -> Result<&'borrow mut Value<'data>> {
+) -> anyhow::Result<&'borrow mut Value<'data>> {
     match index {
         Some(Index::Numeric(idx)) => {
             let idx: usize = idx
@@ -141,14 +123,12 @@ fn apply_index<'data, 'borrow>(
                 .with_context(|| "Expected array")?
                 .get_mut(idx)
                 .with_context(|| format!("Array index out of bounds: {}", idx))
-                .map_err(Into::into)
         }
         Some(Index::String(key)) => entry
             .as_object_mut()
             .with_context(|| "Expected object")?
             .get_mut(key)
-            .with_context(|| format!("Object key not found: {}", key))
-            .map_err(Into::into),
+            .with_context(|| format!("Object key not found: {}", key)),
         None => Ok(entry),
     }
 }
