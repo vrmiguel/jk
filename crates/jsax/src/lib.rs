@@ -111,9 +111,9 @@ pub struct Parser<'source> {
 }
 
 impl<'source> Parser<'source> {
-    pub fn new(bytes: &'source str) -> Self {
+    pub fn new(source: &'source str) -> Self {
         Self {
-            lexer: Token::lexer(bytes),
+            lexer: Token::lexer(source),
             context: vec![],
             last_token: Token::Null,
         }

@@ -115,6 +115,7 @@ fn run() -> anyhow::Result<()> {
             let stdout = io::stdout();
             let writer = BufWriter::new(stdout.lock());
             fmt::Formatter::new(source.as_str()?).format_to(writer)?;
+            // TODO: print a final newline if output is not being piped
         }
         Command::Help => {
             unreachable!()
