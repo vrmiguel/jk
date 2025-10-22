@@ -264,7 +264,6 @@ dependencies = [
 [[package]]
 name = "jsax"
 version = "0.1.0"
-source = "git+https://github.com/vrmiguel/jsax.git#88a65b7d1ffacaaa8e3d89bc4c40f11ec48f5007"
 dependencies = [
  "logos",
  "serde_json",

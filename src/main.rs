@@ -1,4 +1,7 @@
-use std::{io::{self, BufWriter}, process::ExitCode};
+use std::{
+    io::{self, BufWriter},
+    process::ExitCode,
+};
 
 use anyhow::anyhow;
 use lexopt::Arg;
