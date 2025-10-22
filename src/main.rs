@@ -1,13 +1,21 @@
-use std::{
-    fs::File,
-    io::{self, BufReader, Read},
-    path::PathBuf,
-};
+use std::{io::{self, BufWriter}, process::ExitCode};
 
-use anyhow::Context;
+use anyhow::anyhow;
 use lexopt::Arg;
 
-use crate::{node::Node, utils::is_stdin_readable};
+use crate::{node::Node, source::Source, utils::is_stdin_readable};
+
+mod borrowed_value;
+/// Prints a flattened version of the loaded JSON
+mod flatten;
+/// A version of serde_json::Value that tracks which parts of it are collapsed/expanded
+mod node;
+mod source;
+/// Reverts `jk flatten` to its original form
+mod unflatten;
+mod utils;
+/// The interactive TUI JSON viewer
+mod viewer;
 
 #[derive(Debug)]
 enum Command {
@@ -17,70 +25,16 @@ enum Command {
     Help,
 }
 
-/// Where to load data from
-enum Source {
-    Stdin,
-    File(PathBuf),
-}
-
-enum SourceIterator {
-    Stdin(io::Bytes<io::StdinLock<'static>>),
-    File(io::Bytes<BufReader<File>>),
-}
-
-impl Iterator for SourceIterator {
-    type Item = Result<u8, io::Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            SourceIterator::Stdin(iter) => iter.next(),
-            SourceIterator::File(iter) => iter.next(),
-        }
+fn main() -> ExitCode {
+    if let Err(err) = run() {
+        eprintln!("{err:?}");
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
-impl Source {
-    fn load(self) -> anyhow::Result<Vec<u8>> {
-        match self {
-            Source::Stdin => {
-                let mut buf = Vec::with_capacity(1024);
-                io::stdin().lock().read_to_end(&mut buf).unwrap();
-                Ok(buf)
-            }
-            Source::File(path) => {
-                let buf = std::fs::read(&path)
-                    .with_context(|| format!("failed to read file: {}", path.display()))?;
-                Ok(buf)
-            }
-        }
-    }
-
-    fn iterator(self) -> anyhow::Result<SourceIterator> {
-        match self {
-            Source::Stdin => Ok(SourceIterator::Stdin(io::stdin().lock().bytes())),
-            Source::File(path) => {
-                let file = File::open(&path)
-                    .with_context(|| format!("failed to open file: {}", path.display()))?;
-                let reader = BufReader::new(file);
-                
-                Ok(SourceIterator::File(reader.bytes()))
-            }
-        }
-    }
-}
-
-mod borrowed_value;
-/// Prints a flattened version of the loaded JSON
-mod flatten;
-/// A version of serde_json::Value that tracks which parts of it are collapsed/expanded
-mod node;
-/// Reverts `jk flatten` to its original form
-mod unflatten;
-mod utils;
-/// The interactive TUI JSON viewer
-mod viewer;
-
-fn main() -> anyhow::Result<()> {
+fn run() -> anyhow::Result<()> {
     let piped_input = is_stdin_readable();
     let mut parser = lexopt::Parser::from_env();
 
@@ -131,21 +85,21 @@ fn main() -> anyhow::Result<()> {
 
     match command {
         Command::View => {
-            let buf = source.load()?;
-            let json = serde_json::from_slice(&buf).unwrap();
+            let source = source.load()?;
+            let json = serde_json::from_slice(source.as_bytes()).unwrap();
             let root = Node::from_value(json);
             viewer::start_viewer(root)?;
         }
         Command::Flatten => {
-            let iter = source.iterator()?;
-            let parser = jsax::Parser::new(iter);
+            let source = source.load()?;
 
-            flatten::flatten(parser)?;
+            let stdout = io::stdout();
+            let writer = BufWriter::new(stdout.lock());
+            flatten::flatten(source.as_str()?, writer)?;
         }
         Command::Unflatten => {
-            let buf = source.load()?;
-            let utf8 = std::str::from_utf8(&buf).unwrap();
-            unflatten::unflatten(utf8).unwrap();
+            let source = source.load()?;
+            unflatten::unflatten(source.as_str()?).map_err(|err| anyhow!(err.0))?;
         }
         Command::Help => {
             unreachable!()

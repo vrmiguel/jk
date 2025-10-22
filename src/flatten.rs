@@ -1,10 +1,9 @@
 use std::{
-    fmt::{self, Display, Write},
-    io::{self, BufWriter, Write as IoWrite, stdout},
+    fmt::Write as FmtWrite,
+    io::{BufWriter, Write as IoWrite},
 };
 
-use jsax::Event;
-use serde_json::Value;
+use jsax::{Event, Parser};
 
 // TODO: implement other formats. Only `gron` is supported so far.
 #[allow(dead_code)]
@@ -13,89 +12,8 @@ pub enum FlattenFormat {
     Pointer,
 }
 
-/// Applies JSON string escaping
-struct Escaped<'a>(&'a str);
-
-impl Display for Escaped<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for ch in self.0.chars() {
-            match ch {
-                '\\' => f.write_str("\\\\")?,
-                '"' => f.write_str("\\\"")?,
-                _ => f.write_char(ch)?,
-            }
-        }
-        Ok(())
-    }
-}
-
-/// A struct whose Display impl prints out the flattened version of this [Value].
-// TODO: the next step here, in terms of performance, is to implement this using a SAX/streaming parser
-pub struct Flattened<'a> {
-    val: &'a serde_json::Value,
-}
-
-impl Display for Flattened<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut path = String::with_capacity(256);
-        path.push_str("json");
-
-        fn flatten_rec(
-            value: &Value,
-            path: &mut String,
-            f: &mut fmt::Formatter<'_>,
-        ) -> fmt::Result {
-            match value {
-                Value::Object(map) => {
-                    writeln!(f, "{path} = {{}};")?;
-
-                    for (key, val) in map {
-                        let len = path.len();
-                        path.push('.');
-                        path.push_str(key);
-
-                        flatten_rec(val, path, f)?;
-
-                        path.truncate(len);
-                    }
-                }
-                Value::Array(arr) => {
-                    writeln!(f, "{path} = [];")?;
-
-                    for (idx, val) in arr.iter().enumerate() {
-                        let len = path.len();
-                        write!(path, "[{}]", idx).unwrap();
-
-                        flatten_rec(val, path, f)?;
-
-                        path.truncate(len);
-                    }
-                }
-                Value::String(s) => {
-                    writeln!(f, "{path} = \"{}\";", Escaped(s))?;
-                }
-                Value::Number(n) => {
-                    writeln!(f, "{path} = {n};")?;
-                }
-                Value::Bool(b) => {
-                    writeln!(f, "{path} = {b};")?;
-                }
-                Value::Null => {
-                    writeln!(f, "{path} = null;")?;
-                }
-            }
-            Ok(())
-        }
-
-        flatten_rec(&self.val, &mut path, f)
-    }
-}
-
-pub fn flatten(
-    mut parser: jsax::Parser<io::Error, impl Iterator<Item = Result<u8, io::Error>>>,
-) -> anyhow::Result<()> {
-    let stdout = stdout();
-    let mut writer = BufWriter::new(stdout.lock());
+pub fn flatten<W: IoWrite>(input: &str, mut writer: BufWriter<W>) -> anyhow::Result<()> {
+    let mut parser = Parser::new(input);
 
     let mut path = String::from("json");
 
@@ -194,8 +112,119 @@ pub fn flatten(
 }
 
 #[cfg(test)]
+mod old_impl {
+    use std::fmt::{self, Display, Write};
+
+    use serde_json::Value;
+
+    /// This was our initial implementation of `jk flatten`. It's worth to keep it around since it's very likely correct,
+    /// so it serves as a way of testing our faster-but-more-complicated implementation
+    ///
+    /// For reference, how both implementations compare:
+    ///
+    /// ```no_run
+    /// % hyperfine 'jk flatten large.json' 'jk-initial flatten large.json'
+    /// Benchmark 1: jk flatten large.json
+    /// Time (mean ± σ):      1.276 s ±  0.148 s    [User: 1.152 s, System: 0.064 s]
+    /// Range (min … max):    1.200 s …  1.672 s    10 runs
+    ///
+    /// Warning: The first benchmarking run for this command was significantly slower than the rest (1.672 s). This could be caused by (filesystem) caches that were not filled until after the first run. You should consider using the '--warmup' option to fill those caches before the actual benchmark. Alternatively, use the '--prepare' option to clear the caches before each timing run.
+    ///
+    /// Benchmark 2: jk-initial flatten large.json
+    /// Time (mean ± σ):      5.748 s ±  0.519 s    [User: 3.676 s, System: 1.399 s]
+    /// Range (min … max):    4.925 s …  6.279 s    10 runs
+    ///
+    /// Summary
+    /// jk flatten large.json ran
+    /// 4.50 ± 0.66 times faster than jk-initial flatten large.json
+    /// ```
+    ///
+    /// In terms of memory, the new streaming flatten takes around 1MB of RAM, the older reached over 2GB. The test file in question was a 320MB JSON.
+    ///
+    /// Refs:
+    /// jk: f98b24f8b6035f0e79f2e84988f21bd0a4212320
+    /// jk-old: 7c990ce00ff384adf5ace3e219acde8c7877246a
+    ///
+    pub struct Flattened<'a> {
+        pub val: &'a serde_json::Value,
+    }
+
+    impl Display for Flattened<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let mut path = String::with_capacity(256);
+            path.push_str("json");
+
+            fn flatten_rec(
+                value: &Value,
+                path: &mut String,
+                f: &mut fmt::Formatter<'_>,
+            ) -> fmt::Result {
+                match value {
+                    Value::Object(map) => {
+                        writeln!(f, "{path} = {{}};")?;
+
+                        for (key, val) in map {
+                            let len = path.len();
+                            path.push('.');
+                            path.push_str(key);
+
+                            flatten_rec(val, path, f)?;
+
+                            path.truncate(len);
+                        }
+                    }
+                    Value::Array(arr) => {
+                        writeln!(f, "{path} = [];")?;
+
+                        for (idx, val) in arr.iter().enumerate() {
+                            let len = path.len();
+                            write!(path, "[{}]", idx).unwrap();
+
+                            flatten_rec(val, path, f)?;
+
+                            path.truncate(len);
+                        }
+                    }
+                    Value::String(s) => {
+                        writeln!(f, "{path} = \"{}\";", Escaped(s))?;
+                    }
+                    Value::Number(n) => {
+                        writeln!(f, "{path} = {n};")?;
+                    }
+                    Value::Bool(b) => {
+                        writeln!(f, "{path} = {b};")?;
+                    }
+                    Value::Null => {
+                        writeln!(f, "{path} = null;")?;
+                    }
+                }
+                Ok(())
+            }
+
+            flatten_rec(&self.val, &mut path, f)
+        }
+    }
+
+    /// Applies JSON string escaping
+    struct Escaped<'a>(&'a str);
+
+    impl Display for Escaped<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            for ch in self.0.chars() {
+                match ch {
+                    '\\' => f.write_str("\\\\")?,
+                    '"' => f.write_str("\\\"")?,
+                    _ => f.write_char(ch)?,
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::flatten::old_impl::Flattened;
 
     #[test]
     fn flatten_simple_object() {

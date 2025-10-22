@@ -16,7 +16,7 @@ type Result<T = ()> = std::result::Result<T, Error>;
 
 /// This is mostly because `nom` errors are unwieldy, and cannot interface with `anyhow`, at least as far as I can tell
 #[derive(Debug)]
-pub struct Error(String);
+pub struct Error(pub String);
 
 impl From<nom::Err<nom::error::Error<&str>>> for Error {
     fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
