@@ -75,6 +75,28 @@ pub enum Event<'a> {
     Null,
 }
 
+impl Event<'_> {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Event::StartObject => "{",
+            Event::EndObject { .. } => "}",
+            Event::StartArray => "[",
+            Event::EndArray { .. } => "]",
+            Event::Key(_) => "",
+            Event::String(s) => s,
+            Event::Number(n) => n,
+            Event::Boolean(b) => {
+                if *b {
+                    "true"
+                } else {
+                    "false"
+                }
+            }
+            Event::Null => "null",
+        }
+    }
+}
+
 #[cold]
 fn unexpected(token: Token<'_>) -> Error {
     Error::Unexpected(token.to_string())

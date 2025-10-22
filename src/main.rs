@@ -10,6 +10,8 @@ use crate::{node::Node, source::Source, utils::is_stdin_readable};
 mod borrowed_value;
 /// Prints a flattened version of the loaded JSON
 mod flatten;
+/// A JSON formatter
+mod fmt;
 /// A version of serde_json::Value that tracks which parts of it are collapsed/expanded
 mod node;
 mod source;
@@ -24,6 +26,7 @@ enum Command {
     View,
     Flatten,
     Unflatten,
+    Fmt,
     Help,
 }
 
@@ -51,6 +54,9 @@ fn run() -> anyhow::Result<()> {
             }
             Arg::Value(value) if value == "unflatten" && command.is_none() => {
                 command = Some(Command::Unflatten);
+            }
+            Arg::Value(value) if value == "fmt" && command.is_none() => {
+                command = Some(Command::Fmt);
             }
             Arg::Value(value) if value == "help" && command.is_none() => {
                 command = Some(Command::Help);
@@ -102,6 +108,13 @@ fn run() -> anyhow::Result<()> {
         Command::Unflatten => {
             let source = source.load()?;
             unflatten::unflatten(source.as_str()?)?;
+        }
+        Command::Fmt => {
+            let source = source.load()?;
+
+            let stdout = io::stdout();
+            let writer = BufWriter::new(stdout.lock());
+            fmt::Formatter::new(source.as_str()?).format_to(writer)?;
         }
         Command::Help => {
             unreachable!()

@@ -23,10 +23,14 @@ impl<'source> Parser<'source> {
     /// _Must_ lex a token of the same type as the one provided, or this function errors
     fn must_lex(&mut self, expected: GronToken) -> anyhow::Result<GronToken<'_>> {
         match self.lexer.next() {
-            Some(Ok(token)) if std::mem::discriminant(&token) == std::mem::discriminant(&expected) => Ok(token),
+            Some(Ok(token))
+                if std::mem::discriminant(&token) == std::mem::discriminant(&expected) =>
+            {
+                Ok(token)
+            }
             Some(Ok(token)) => Err(anyhow!("Expected {expected}, found {token} instead")),
             Some(Err(())) => Err(anyhow!("Expected {expected}, but the lexer failed instead")),
-            None => Err(anyhow!("Expected {expected}, found EOF instead"))
+            None => Err(anyhow!("Expected {expected}, found EOF instead")),
         }
     }
 
@@ -223,14 +227,16 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![Identifier {
-                    base: "json",
-                    index: None
-                },
-                Identifier {
-                    base: "hobbies",
-                    index: Some(Index::Numeric("0"))
-                }],
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        index: None
+                    },
+                    Identifier {
+                        base: "hobbies",
+                        index: Some(Index::Numeric("0"))
+                    }
+                ],
                 value: GronValue::String("reading")
             })
         );
@@ -238,14 +244,16 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![Identifier {
-                    base: "json",
-                    index: None
-                },
-                Identifier {
-                    base: "hobbies",
-                    index: Some(Index::Numeric("1"))
-                }],
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        index: None
+                    },
+                    Identifier {
+                        base: "hobbies",
+                        index: Some(Index::Numeric("1"))
+                    }
+                ],
                 value: GronValue::String("cycling")
             })
         );
@@ -270,14 +278,16 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![Identifier {
-                    base: "json",
-                    index: None
-                },
-                Identifier {
-                    base: "hobbies",
-                    index: Some(Index::String("hobbies oh my hobbies"))
-                }],
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        index: None
+                    },
+                    Identifier {
+                        base: "hobbies",
+                        index: Some(Index::String("hobbies oh my hobbies"))
+                    }
+                ],
                 value: GronValue::String("reading")
             })
         );
@@ -285,19 +295,20 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![Identifier {
-                    base: "json",
-                    index: None
-                },
-                Identifier {
-                    base: "hobbies",
-                    index: Some(Index::Numeric("1"))
-                }],
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        index: None
+                    },
+                    Identifier {
+                        base: "hobbies",
+                        index: Some(Index::Numeric("1"))
+                    }
+                ],
                 value: GronValue::String("cycling")
             })
         );
     }
-
 
     #[test]
     fn parses_til_eof() {
@@ -314,8 +325,6 @@ mod tests {
         assert_eq!(parser.parse_next_line().unwrap(), None);
         assert_eq!(parser.parse_next_line().unwrap(), None);
     }
-
-
 }
 
 // #[cfg(test)]
@@ -556,8 +565,6 @@ mod tests {
 //                 }
 //             ))
 //         );
-
-
 
 //         assert_eq!(
 //             parse_gron_line("json.value   =   123;"),
