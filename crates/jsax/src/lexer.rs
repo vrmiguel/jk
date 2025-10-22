@@ -2,7 +2,7 @@ use std::fmt::{Display, Write};
 
 use logos::Logos;
 
-#[derive(Debug, Logos)]
+#[derive(Debug, Logos, Clone, Copy)]
 #[logos(skip r"[ \t\r\n\f]+")]
 pub enum Token<'source> {
     #[token("false", |_| false)]
@@ -35,8 +35,18 @@ pub enum Token<'source> {
     #[regex(r"-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?", |lex| lex.slice())]
     Number(&'source str),
 
-    #[regex(r#""([^"\\\x00-\x1F]|\\(["\\bnfrt/]|u[a-fA-F0-9]{4}))*""#, |lex| lex.slice().trim_matches('"'))]
+    #[regex(r#""([^"\\\x00-\x1F]|\\(["\\bnfrt/]|u[a-fA-F0-9]{4}))*""#, |lex| trim_quotes(lex.slice()))]
     String(&'source str),
+}
+
+#[inline]
+fn trim_quotes(input: &str) -> &str {
+    let len = input.len();
+
+    debug_assert_eq!(input.as_bytes()[0], b'"');
+    debug_assert_eq!(input.as_bytes()[len - 1], b'"');
+
+    &input[1..len - 1]
 }
 
 impl Display for Token<'_> {

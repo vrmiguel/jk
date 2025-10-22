@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use logos::{Lexer, Logos};
 
 mod lexer;
@@ -79,6 +81,8 @@ fn unexpected(token: Token<'_>) -> Error {
 
 /// A JSON streaming parser.
 pub struct Parser<'source> {
+    /// The last parsed token
+    last_token: Token<'source>,
     lexer: Lexer<'source, Token<'source>>,
     context: Vec<Context>,
 }
@@ -88,6 +92,7 @@ impl<'source> Parser<'source> {
         Self {
             lexer: Token::lexer(bytes),
             context: vec![],
+            last_token: Token::Null,
         }
     }
 
@@ -159,10 +164,26 @@ impl<'source> Parser<'source> {
         }
     }
 
+    /// The range of the last parsed token
+    fn span(&self) -> Range<usize> {
+        match self.last_token {
+            // Logos returns the span including the double quotes, this removes them
+            Token::String(_) => {
+                let Range { start, end } = self.lexer.span();
+
+                Range {
+                    start: start + 1,
+                    end: end - 1,
+                }
+            }
+            _ => self.lexer.span(),
+        }
+    }
+
     pub fn parse_next(&mut self) -> Result<Option<Event<'_>>, Error> {
         while let Some(token) = self.lexer.next() {
             let token = token.unwrap();
-            let span = self.lexer.span();
+            self.last_token = token;
 
             match token {
                 Token::Colon => {
@@ -690,5 +711,60 @@ mod tests {
             "single_key": {"nested": [{"deep": "value"}]}
         });
         assert_eq!(parse_to_value(&expected.to_string()), expected);
+    }
+
+    #[test]
+    fn spanned() {
+        let json = r#"[1, "apple", true, null]"#;
+        let mut parser = Parser::new(json);
+
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::StartArray));
+        assert_eq!(&json[parser.span()], "[");
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::Number("1")));
+        assert_eq!(&json[parser.span()], "1");
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::String("apple")));
+        assert_eq!(&json[parser.span()], "apple");
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::Boolean(true)));
+        assert_eq!(&json[parser.span()], "true");
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::Null));
+        assert_eq!(&json[parser.span()], "null");
+        assert_eq!(
+            parser.parse_next().unwrap(),
+            Some(Event::EndArray { len: 4 })
+        );
+        assert_eq!(&json[parser.span()], "]");
+        assert_eq!(parser.parse_next().unwrap(), None);
+    }
+
+    #[test]
+    fn spanned_empty_string() {
+        let json = r#"[1, "", "\"", {"a":"c"}]"#;
+        let mut parser = Parser::new(json);
+
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::StartArray));
+        assert_eq!(&json[parser.span()], "[");
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::Number("1")));
+        assert_eq!(&json[parser.span()], "1");
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::String("")));
+        assert_eq!(&json[parser.span()], "");
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::String(r#"\""#)));
+        assert_eq!(&json[parser.span()], r#"\""#);
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::StartObject));
+        assert_eq!(&json[parser.span()], "{");
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::Key("a")));
+        assert_eq!(&json[parser.span()], "a");
+        assert_eq!(parser.parse_next().unwrap(), Some(Event::String("c")));
+        assert_eq!(&json[parser.span()], "c");
+        assert_eq!(
+            parser.parse_next().unwrap(),
+            Some(Event::EndObject { member_count: 1 })
+        );
+        assert_eq!(&json[parser.span()], "}");
+        assert_eq!(
+            parser.parse_next().unwrap(),
+            Some(Event::EndArray { len: 4 })
+        );
+        assert_eq!(&json[parser.span()], "]");
+        assert_eq!(parser.parse_next().unwrap(), None);
     }
 }
