@@ -190,9 +190,8 @@ impl<'source> Parser<'source> {
         }
     }
 
-    #[allow(unused)]
     /// The range of the last parsed token
-    fn span(&self) -> Range<usize> {
+    pub fn span(&self) -> Range<usize> {
         match self.last_token {
             // Logos returns the span including the double quotes, this removes them
             Token::String(_) => {
@@ -207,10 +206,20 @@ impl<'source> Parser<'source> {
         }
     }
 
+    pub fn parse_next_spanned(&mut self) -> Result<Option<(Event<'_>, Range<usize>)>, Error> {
+        self.parse_next_internal()
+    }
+
     pub fn parse_next(&mut self) -> Result<Option<Event<'_>>, Error> {
+        self.parse_next_internal()
+            .map(|opt| opt.map(|(event, _)| event))
+    }
+
+    fn parse_next_internal(&mut self) -> Result<Option<(Event<'_>, Range<usize>)>, Error> {
         while let Some(token) = self.lexer.next() {
             let token = token.unwrap();
             self.last_token = token;
+            let span = self.span();
 
             match token {
                 Token::Colon => {
@@ -222,11 +231,11 @@ impl<'source> Parser<'source> {
 
                 Token::Null => {
                     self.consume_value(token)?;
-                    return Ok(Some(Event::Null));
+                    return Ok(Some((Event::Null, span)));
                 }
                 Token::Bool(boolean) => {
                     self.consume_value(token)?;
-                    return Ok(Some(Event::Boolean(boolean)));
+                    return Ok(Some((Event::Boolean(boolean), span)));
                 }
                 Token::BracketOpen => {
                     self.consume_value(token)?;
@@ -234,7 +243,7 @@ impl<'source> Parser<'source> {
                         len: 0,
                         expected_next_token: ArrayNextToken::ValueOrClose,
                     });
-                    return Ok(Some(Event::StartArray));
+                    return Ok(Some((Event::StartArray, span)));
                 }
                 Token::BracketClose => match self.context.pop() {
                     Some(Context::Array {
@@ -244,7 +253,7 @@ impl<'source> Parser<'source> {
                         match expected_next_token {
                             ArrayNextToken::ValueOrClose | ArrayNextToken::CommaOrClose => {
                                 // Valid states to close: empty array or after a value
-                                return Ok(Some(Event::EndArray { len }));
+                                return Ok(Some((Event::EndArray { len }, span)));
                             }
                             ArrayNextToken::Value => {
                                 // After comma, must see value, not ]
@@ -260,7 +269,7 @@ impl<'source> Parser<'source> {
                         member_count: 0,
                         expected_next_token: ObjNextToken::KeyOrClose,
                     });
-                    return Ok(Some(Event::StartObject));
+                    return Ok(Some((Event::StartObject, span)));
                 }
                 Token::BraceClose => match self.context.pop() {
                     Some(Context::Object {
@@ -268,7 +277,7 @@ impl<'source> Parser<'source> {
                         expected_next_token,
                     }) => match expected_next_token {
                         ObjNextToken::KeyOrClose | ObjNextToken::CommaOrClose => {
-                            return Ok(Some(Event::EndObject { member_count }));
+                            return Ok(Some((Event::EndObject { member_count }, span)));
                         }
                         _ => return Err(Error::TrailingComma),
                     },
@@ -282,11 +291,11 @@ impl<'source> Parser<'source> {
                         ObjNextToken::Key | ObjNextToken::KeyOrClose => {
                             *expected_next_token = ObjNextToken::Colon;
                             *member_count += 1;
-                            return Ok(Some(Event::Key(val)));
+                            return Ok(Some((Event::Key(val), span)));
                         }
                         ObjNextToken::Value => {
                             self.consume_value(token)?;
-                            return Ok(Some(Event::String(val)));
+                            return Ok(Some((Event::String(val), span)));
                         }
                         ObjNextToken::Colon | ObjNextToken::CommaOrClose => {
                             return Err(unexpected(token));
@@ -294,12 +303,12 @@ impl<'source> Parser<'source> {
                     },
                     Some(Context::Array { .. }) | None => {
                         self.consume_value(token)?;
-                        return Ok(Some(Event::String(val)));
+                        return Ok(Some((Event::String(val), span)));
                     }
                 },
                 Token::Number(num) => {
                     self.consume_value(token)?;
-                    return Ok(Some(Event::Number(num)));
+                    return Ok(Some((Event::Number(num), span)));
                 }
             };
         }
