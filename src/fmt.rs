@@ -258,7 +258,6 @@ mod tests {
             "false",
             "null",
             "33",
-
             // Handles empty
             "[]",
             "{}",
@@ -282,7 +281,6 @@ mod tests {
             r#"[1, "string", false, null, []]"#,
             r#"[{"items": [1, 2, 3]}]"#,
             r#"[{"a": 1}, {"b": 2}, {"c": 3}]"#,
-
             // Empty strings
             r#"{"": "empty key"}"#,
             r#"{"key": ""}"#,
@@ -300,6 +298,42 @@ mod tests {
                     "There was a different result in test case '{test_case}'\nExpected: '{theirs}'\nReceived: '{ours}'"
                 )
             }
+        }
+    }
+
+    #[test]
+    fn string_escaping() {
+        let test_cases = [
+            (
+                r#"{"key": "hello\"world"}"#,
+                "{\n  \"key\": \"hello\\\"world\"\n}",
+            ),
+            (
+                r#"{"path": "C:\\Users\\file.txt"}"#,
+                "{\n  \"path\": \"C:\\\\Users\\\\file.txt\"\n}",
+            ),
+            (
+                r#"{"text": "line1\nline2"}"#,
+                "{\n  \"text\": \"line1\\nline2\"\n}",
+            ),
+            (
+                r#"{"text": "tab\there"}"#,
+                "{\n  \"text\": \"tab\\there\"\n}",
+            ),
+            (
+                r#"{"msg": "She said \"Hi!\"\n"}"#,
+                "{\n  \"msg\": \"She said \\\"Hi!\\\"\\n\"\n}",
+            ),
+            (r#"["quote\"here"]"#, "[\n  \"quote\\\"here\"\n]"),
+        ];
+
+        for (input, expected) in test_cases {
+            let result = format_to_string(input);
+            assert_eq!(
+                result, expected,
+                "Failed for input: {}\nExpected: {:?}\nGot: {:?}",
+                input, expected, result
+            );
         }
     }
 }
