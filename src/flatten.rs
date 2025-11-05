@@ -223,7 +223,7 @@ mod old_impl {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests_old_impl {
     use crate::flatten::old_impl::Flattened;
 
     #[test]
@@ -271,5 +271,266 @@ mod tests {
             flattened.to_string(),
             "json = [];\njson[0] = {};\njson[0].age = 30;\njson[0].hobbies = [];\njson[0].hobbies[0] = \"reading\";\njson[0].hobbies[1] = \"cycling\";\njson[0].name = \"John Doe\";\njson[1] = {};\njson[1].age = 25;\njson[1].hobbies = [];\njson[1].hobbies[0] = \"swimming\";\njson[1].hobbies[1] = \"dancing\";\njson[1].name = \"Jane Doe\";\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::BufWriter;
+
+    use super::*;
+
+    fn flatten_to_string(input: &str) -> String {
+        let mut output = Vec::new();
+        let writer = BufWriter::new(&mut output);
+        flatten(input, writer).unwrap();
+        String::from_utf8(output).unwrap()
+    }
+
+    #[test]
+    fn flatten_simple_object() {
+        let json = r#"{"a": "b", "c": "d"}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(result, "json = {};\njson.a = \"b\";\njson.c = \"d\";\n");
+    }
+
+    #[test]
+    fn flatten_simple_array() {
+        let json = r#"[1, 2, 3]"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = [];\njson[0] = 1;\njson[1] = 2;\njson[2] = 3;\n"
+        );
+    }
+
+    #[test]
+    fn flatten_nested_object() {
+        let json = r#"{"user": {"name": "John", "age": 30}}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = {};\njson.user = {};\njson.user.name = \"John\";\njson.user.age = 30;\n"
+        );
+    }
+
+    #[test]
+    fn flatten_object_with_array() {
+        let json = r#"{"name": "John", "hobbies": ["reading", "coding"]}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = {};\njson.name = \"John\";\njson.hobbies = [];\njson.hobbies[0] = \"reading\";\njson.hobbies[1] = \"coding\";\n"
+        );
+    }
+
+    #[test]
+    fn flatten_array_of_objects() {
+        let json = r#"[{"name": "John", "age": 30}, {"name": "Jane", "age": 25}]"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = [];\njson[0] = {};\njson[0].name = \"John\";\njson[0].age = 30;\njson[1] = {};\njson[1].name = \"Jane\";\njson[1].age = 25;\n"
+        );
+    }
+
+    #[test]
+    fn flatten_complex_nested_structure() {
+        let json = r#"[
+            {
+                "name": "John Doe",
+                "age": 30,
+                "hobbies": ["reading", "cycling"]
+            },
+            {
+                "name": "Jane Doe",
+                "age": 25,
+                "hobbies": ["swimming", "dancing"]
+            }
+        ]"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = [];\njson[0] = {};\njson[0].name = \"John Doe\";\njson[0].age = 30;\njson[0].hobbies = [];\njson[0].hobbies[0] = \"reading\";\njson[0].hobbies[1] = \"cycling\";\njson[1] = {};\njson[1].name = \"Jane Doe\";\njson[1].age = 25;\njson[1].hobbies = [];\njson[1].hobbies[0] = \"swimming\";\njson[1].hobbies[1] = \"dancing\";\n"
+        );
+    }
+
+    #[test]
+    fn flatten_all_value_types() {
+        let json = r#"{"string": "hello", "number": 42, "bool": true, "null": null}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = {};\njson.string = \"hello\";\njson.number = 42;\njson.bool = true;\njson.null = null;\n"
+        );
+    }
+
+    #[test]
+    fn flatten_empty_object() {
+        let json = r#"{}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(result, "json = {};\n");
+    }
+
+    #[test]
+    fn flatten_empty_array() {
+        let json = r#"[]"#;
+        let result = flatten_to_string(json);
+        assert_eq!(result, "json = [];\n");
+    }
+
+    #[test]
+    fn flatten_nested_arrays() {
+        let json = r#"[[1, 2], [3, 4]]"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = [];\njson[0] = [];\njson[0][0] = 1;\njson[0][1] = 2;\njson[1] = [];\njson[1][0] = 3;\njson[1][1] = 4;\n"
+        );
+    }
+
+    #[test]
+    fn flatten_deeply_nested() {
+        let json = r#"{"a": {"b": {"c": {"d": "deep"}}}}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = {};\njson.a = {};\njson.a.b = {};\njson.a.b.c = {};\njson.a.b.c.d = \"deep\";\n"
+        );
+    }
+
+    #[test]
+    fn flatten_string_with_quotes() {
+        let json = r#"{"key": "string with \"quotes\""}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = {};\njson.key = \"string with \\\"quotes\\\"\";\n"
+        );
+    }
+
+    #[test]
+    fn flatten_string_with_backslash() {
+        let json = r#"{"key": "path\\to\\file"}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(result, "json = {};\njson.key = \"path\\\\to\\\\file\";\n");
+    }
+
+    #[test]
+    fn flatten_string_with_escapes() {
+        let json = r#"{"key": "line\nbreak\ttab\rcarriage"}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = {};\njson.key = \"line\\nbreak\\ttab\\rcarriage\";\n"
+        );
+    }
+
+    #[test]
+    fn flatten_empty_string() {
+        let json = r#"{"key": "", "": "empty_key"}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = {};\njson.key = \"\";\njson. = \"empty_key\";\n"
+        );
+    }
+
+    #[test]
+    fn flatten_keys_with_special_chars() {
+        let json = r#"{"key.with.dots": "value1", "key with spaces": "value2", "key-with-dashes": "value3"}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = {};\njson.key.with.dots = \"value1\";\njson.key with spaces = \"value2\";\njson.key-with-dashes = \"value3\";\n"
+        );
+    }
+
+    #[test]
+    fn flatten_various_number_formats() {
+        let json =
+            r#"{"float": 3.14, "negative": -42, "scientific": 1.23e-10, "zero": 0, "large": 1e10}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = {};\njson.float = 3.14;\njson.negative = -42;\njson.scientific = 1.23e-10;\njson.zero = 0;\njson.large = 1e10;\n"
+        );
+    }
+
+    #[test]
+    fn flatten_mixed_type_array() {
+        let json = r#"[1, "string", true, false, null, {"obj": "here"}, [1, 2]]"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = [];\njson[0] = 1;\njson[1] = \"string\";\njson[2] = true;\njson[3] = false;\njson[4] = null;\njson[5] = {};\njson[5].obj = \"here\";\njson[6] = [];\njson[6][0] = 1;\njson[6][1] = 2;\n"
+        );
+    }
+
+    #[test]
+    fn flatten_unicode_strings() {
+        let json = r#"{"emoji": "🎉", "chinese": "你好", "accents": "café"}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = {};\njson.emoji = \"🎉\";\njson.chinese = \"你好\";\njson.accents = \"café\";\n"
+        );
+    }
+
+    #[test]
+    fn flatten_whitespace_variations() {
+        let json = r#"  {  "a"  :  "b"  ,  "c"  :  "d"  }  "#;
+        let result = flatten_to_string(json);
+        assert_eq!(result, "json = {};\njson.a = \"b\";\njson.c = \"d\";\n");
+
+        let json = r#"{"a":"b","c":"d"}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(result, "json = {};\njson.a = \"b\";\njson.c = \"d\";\n");
+    }
+
+    #[test]
+    fn flatten_boolean_variations() {
+        let json = r#"{"t": true, "f": false}"#;
+        let result = flatten_to_string(json);
+        assert_eq!(result, "json = {};\njson.t = true;\njson.f = false;\n");
+    }
+
+    #[test]
+    fn flatten_array_with_nulls() {
+        let json = r#"[null, null, "not null", null]"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = [];\njson[0] = null;\njson[1] = null;\njson[2] = \"not null\";\njson[3] = null;\n"
+        );
+    }
+
+    #[test]
+    fn flatten_deeply_nested_arrays() {
+        let json = r#"[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]"#;
+        let result = flatten_to_string(json);
+        assert_eq!(
+            result,
+            "json = [];\njson[0] = [];\njson[0][0] = [];\njson[0][0][0] = 1;\njson[0][0][1] = 2;\njson[0][1] = [];\njson[0][1][0] = 3;\njson[0][1][1] = 4;\njson[1] = [];\njson[1][0] = [];\njson[1][0][0] = 5;\njson[1][0][1] = 6;\njson[1][1] = [];\njson[1][1][0] = 7;\njson[1][1][1] = 8;\n"
+        );
+    }
+
+    #[test]
+    fn flatten_single_value() {
+        let json = r#""just a string""#;
+        let result = flatten_to_string(json);
+        assert_eq!(result, "json = \"just a string\";\n");
+
+        let json = r#"42"#;
+        let result = flatten_to_string(json);
+        assert_eq!(result, "json = 42;\n");
+
+        let json = r#"true"#;
+        let result = flatten_to_string(json);
+        assert_eq!(result, "json = true;\n");
+
+        let json = r#"null"#;
+        let result = flatten_to_string(json);
+        assert_eq!(result, "json = null;\n");
     }
 }
