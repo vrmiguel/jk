@@ -215,6 +215,9 @@ impl<'source> Parser<'source> {
             .map(|opt| opt.map(|(event, _)| event))
     }
 
+    // Inlining here is a win for `parse_next`'s performance, since the compiler
+    // seems to optimize away the unused span logic
+    #[inline(always)]
     fn parse_next_internal(&mut self) -> Result<Option<(Event<'_>, Range<usize>)>, Error> {
         while let Some(token) = self.lexer.next() {
             let token = token.unwrap();
