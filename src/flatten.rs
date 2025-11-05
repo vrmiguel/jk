@@ -1,7 +1,4 @@
-use std::{
-    fmt::Write as FmtWrite,
-    io::{BufWriter, Write as IoWrite},
-};
+use std::{fmt::Write as FmtWrite, io::Write as IoWrite};
 
 use jsax::{Event, Parser};
 
@@ -12,98 +9,92 @@ pub enum FlattenFormat {
     Pointer,
 }
 
-pub fn flatten<W: IoWrite>(input: &str, mut writer: BufWriter<W>) -> anyhow::Result<()> {
+enum ContextFrame {
+    /// Currently inside object: tracks where to truncate path for next key
+    Object { base_path_len: usize },
+    /// Currently inside array: tracks path truncation point and current index
+    Array { base_path_len: usize, index: usize },
+}
+
+pub fn flatten<W: IoWrite>(input: &str, mut writer: W) -> anyhow::Result<()> {
     let mut parser = Parser::new(input);
 
-    let mut path = String::from("json");
+    let mut path = String::with_capacity(128);
+    path.push_str("json");
 
-    // Stack of (base_path_length, array_index_if_applicable)
-    let mut stack: Vec<(usize, Option<usize>)> = Vec::new();
+    let mut stack = Vec::with_capacity(4);
+
+    #[inline]
+    fn update_path_after_value(stack: &mut Vec<ContextFrame>, path: &mut String) {
+        match stack.last_mut() {
+            Some(ContextFrame::Array {
+                base_path_len,
+                index,
+            }) => {
+                // Increment to next array index
+                *index += 1;
+                // Truncate path back to array base (e.g., "json.arr[5]" → "json.arr")
+                path.truncate(*base_path_len);
+                // Append new index (e.g., "json.arr" → "json.arr[6]")
+
+                write!(path, "[{}]", index).unwrap();
+            }
+            Some(ContextFrame::Object { base_path_len }) => {
+                // Truncate back to object base, ready for next key
+                // (e.g., "json.obj.key1" → "json.obj")
+                path.truncate(*base_path_len);
+            }
+            None => {}
+        }
+    }
 
     while let Some(event) = parser.parse_next()? {
         match event {
             Event::StartObject => {
                 writeln!(writer, "{path} = {{}};")?;
-
-                stack.push((path.len(), None));
+                stack.push(ContextFrame::Object {
+                    base_path_len: path.len(),
+                });
             }
             Event::StartArray => {
                 writeln!(writer, "{path} = [];")?;
-
                 let base_len = path.len();
-                stack.push((base_len, Some(0)));
-
+                stack.push(ContextFrame::Array {
+                    base_path_len: base_len,
+                    index: 0,
+                });
                 write!(path, "[0]").unwrap();
             }
             Event::Key(key) => {
-                if let Some(&(base_len, _)) = stack.last() {
+                if let Some(frame) = stack.last() {
+                    let base_len = match frame {
+                        ContextFrame::Object { base_path_len } => *base_path_len,
+                        ContextFrame::Array { base_path_len, .. } => *base_path_len,
+                    };
                     path.truncate(base_len);
                 }
-
                 path.push('.');
                 path.push_str(key);
             }
             Event::String(s) => {
                 writeln!(writer, "{path} = \"{s}\";")?;
-
-                if let Some((base_len, array_idx)) = stack.last_mut() {
-                    if let Some(idx) = array_idx {
-                        *idx += 1;
-                        path.truncate(*base_len);
-                        write!(path, "[{}]", idx).unwrap();
-                    } else {
-                        path.truncate(*base_len);
-                    }
-                }
+                update_path_after_value(&mut stack, &mut path);
             }
             Event::Number(n) => {
                 writeln!(writer, "{path} = {n};")?;
-                if let Some((base_len, array_idx)) = stack.last_mut() {
-                    if let Some(idx) = array_idx {
-                        *idx += 1;
-                        path.truncate(*base_len);
-                        write!(path, "[{}]", idx).unwrap();
-                    } else {
-                        path.truncate(*base_len);
-                    }
-                }
+                update_path_after_value(&mut stack, &mut path);
             }
             Event::Boolean(b) => {
                 writeln!(writer, "{path} = {b};")?;
-                if let Some((base_len, array_idx)) = stack.last_mut() {
-                    if let Some(idx) = array_idx {
-                        *idx += 1;
-                        path.truncate(*base_len);
-                        write!(path, "[{}]", idx).unwrap();
-                    } else {
-                        path.truncate(*base_len);
-                    }
-                }
+                update_path_after_value(&mut stack, &mut path);
             }
             Event::Null => {
                 writeln!(writer, "{path} = null;")?;
-                if let Some((base_len, array_idx)) = stack.last_mut() {
-                    if let Some(idx) = array_idx {
-                        *idx += 1;
-                        path.truncate(*base_len);
-                        write!(path, "[{}]", idx).unwrap();
-                    } else {
-                        path.truncate(*base_len);
-                    }
-                }
+                update_path_after_value(&mut stack, &mut path);
             }
             Event::EndObject { .. } | Event::EndArray { .. } => {
                 stack.pop();
-
-                if let Some((base_len, array_idx)) = stack.last_mut() {
-                    if let Some(idx) = array_idx {
-                        *idx += 1;
-                        path.truncate(*base_len);
-                        write!(path, "[{}]", idx).unwrap();
-                    } else {
-                        path.truncate(*base_len);
-                    }
-                }
+                update_path_after_value(&mut stack, &mut path);
             }
         }
     }
