@@ -1,7 +1,6 @@
-use std::{fmt::Write as FmtWrite, io::Write as IoWrite};
+use std::io::Write as IoWrite;
 
 use jsax::{Event, Parser};
-
 // TODO: implement other formats. Only `gron` is supported so far.
 #[allow(dead_code)]
 pub enum FlattenFormat {
@@ -14,6 +13,21 @@ enum ContextFrame {
     Object { base_path_len: usize },
     /// Currently inside array: tracks path truncation point and current index
     Array { base_path_len: usize, index: usize },
+}
+
+#[inline]
+fn push_array_index(path: &mut String, idx: usize) {
+    path.push('[');
+
+    if idx < 10 {
+        path.push((b'0' + idx as u8) as char);
+        path.push(']');
+        return;
+    }
+
+    let mut buf = itoa::Buffer::new();
+    path.push_str(buf.format(idx));
+    path.push(']');
 }
 
 pub fn flatten<W: IoWrite>(input: &str, mut writer: W) -> anyhow::Result<()> {
@@ -36,8 +50,7 @@ pub fn flatten<W: IoWrite>(input: &str, mut writer: W) -> anyhow::Result<()> {
                 // Truncate path back to array base (e.g., "json.arr[5]" → "json.arr")
                 path.truncate(*base_path_len);
                 // Append new index (e.g., "json.arr" → "json.arr[6]")
-
-                write!(path, "[{}]", index).unwrap();
+                push_array_index(path, *index);
             }
             Some(ContextFrame::Object { base_path_len }) => {
                 // Truncate back to object base, ready for next key
@@ -51,19 +64,19 @@ pub fn flatten<W: IoWrite>(input: &str, mut writer: W) -> anyhow::Result<()> {
     while let Some(event) = parser.parse_next()? {
         match event {
             Event::StartObject => {
-                writeln!(writer, "{path} = {{}};")?;
+                writer.write_empty_object(&path)?;
                 stack.push(ContextFrame::Object {
                     base_path_len: path.len(),
                 });
             }
             Event::StartArray => {
-                writeln!(writer, "{path} = [];")?;
+                writer.write_empty_array(&path)?;
                 let base_len = path.len();
                 stack.push(ContextFrame::Array {
                     base_path_len: base_len,
                     index: 0,
                 });
-                write!(path, "[0]").unwrap();
+                path.push_str("[0]");
             }
             Event::Key(key) => {
                 if let Some(frame) = stack.last() {
@@ -77,19 +90,19 @@ pub fn flatten<W: IoWrite>(input: &str, mut writer: W) -> anyhow::Result<()> {
                 path.push_str(key);
             }
             Event::String(s) => {
-                writeln!(writer, "{path} = \"{s}\";")?;
+                writer.write_string_value(&path, s)?;
                 update_path_after_value(&mut stack, &mut path);
             }
             Event::Number(n) => {
-                writeln!(writer, "{path} = {n};")?;
+                writer.write_raw_value(&path, n)?;
                 update_path_after_value(&mut stack, &mut path);
             }
             Event::Boolean(b) => {
-                writeln!(writer, "{path} = {b};")?;
+                writer.write_raw_value(&path, if b { "true" } else { "false" })?;
                 update_path_after_value(&mut stack, &mut path);
             }
             Event::Null => {
-                writeln!(writer, "{path} = null;")?;
+                writer.write_raw_value(&path, "null")?;
                 update_path_after_value(&mut stack, &mut path);
             }
             Event::EndObject { .. } | Event::EndArray { .. } => {
@@ -100,6 +113,50 @@ pub fn flatten<W: IoWrite>(input: &str, mut writer: W) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+trait GronWriteExt {
+    /// Writes `{path} = {};`
+    fn write_empty_object(&mut self, path: &str) -> std::io::Result<()>;
+
+    /// Writes `{path} = [];`
+    fn write_empty_array(&mut self, path: &str) -> std::io::Result<()>;
+
+    /// Writes `{path} = "{value}";`
+    fn write_string_value(&mut self, path: &str, value: &str) -> std::io::Result<()>;
+
+    /// Write: `{path} = {value};` where `value` is a primitive value
+    fn write_raw_value(&mut self, path: &str, value: &str) -> std::io::Result<()>;
+}
+
+impl<W: IoWrite> GronWriteExt for W {
+    #[inline(always)]
+    fn write_empty_object(&mut self, path: &str) -> std::io::Result<()> {
+        self.write_all(path.as_bytes())?;
+        self.write_all(b" = {};\n")
+    }
+
+    #[inline(always)]
+    fn write_empty_array(&mut self, path: &str) -> std::io::Result<()> {
+        self.write_all(path.as_bytes())?;
+        self.write_all(b" = [];\n")
+    }
+
+    #[inline(always)]
+    fn write_string_value(&mut self, path: &str, value: &str) -> std::io::Result<()> {
+        self.write_all(path.as_bytes())?;
+        self.write_all(b" = \"")?;
+        self.write_all(value.as_bytes())?;
+        self.write_all(b"\";\n")
+    }
+
+    #[inline(always)]
+    fn write_raw_value(&mut self, path: &str, value: &str) -> std::io::Result<()> {
+        self.write_all(path.as_bytes())?;
+        self.write_all(b" = ")?;
+        self.write_all(value.as_bytes())?;
+        self.write_all(b";\n")
+    }
 }
 
 #[cfg(test)]

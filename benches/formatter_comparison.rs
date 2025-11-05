@@ -1,5 +1,43 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use jk::Formatter;
+
+fn generate_large_json(target_mb: usize) -> String {
+    let mut json = String::with_capacity(target_mb * 1024 * 1024);
+    json.push('[');
+
+    let mut current_size = 0;
+    let target_size = target_mb * 1024 * 1024;
+    let mut user_id = 0;
+
+    while current_size < target_size {
+        if user_id > 0 {
+            json.push(',');
+        }
+
+        let user = format!(
+            r#"{{"id":{},"name":"User {}","email":"user{}@example.com","age":{},"active":{},"score":{}.{},"address":{{"street":"Street {}","city":"City {}","zip":"{}","country":"Country"}},"tags":["tag1","tag2","tag3"],"metadata":{{"created":"2024-01-01","updated":"2024-11-05","version":1}}}}"#,
+            user_id,
+            user_id,
+            user_id,
+            20 + (user_id % 60),
+            user_id % 2 == 0,
+            user_id % 100,
+            user_id % 1000,
+            user_id % 1000,
+            user_id % 100,
+            10000 + user_id,
+        );
+
+        current_size += user.len();
+        json.push_str(&user);
+        user_id += 1;
+    }
+
+    json.push(']');
+    json
+}
 
 fn format_to_string(input: &str) -> String {
     let mut bytes = Vec::new();
@@ -37,15 +75,18 @@ fn format_to_string_simd_json(input: &str) -> String {
 }
 
 fn benchmark_formatters(c: &mut Criterion) {
-    let mut file_cases = Vec::new();
+    let mut test_cases = Vec::new();
 
-    if let Ok(content) = std::fs::read_to_string("canada.json") {
-        file_cases.push(("5MB", content));
+    for size_mb in [5, 50, 150] {
+        println!("Generating {}MB JSON for benchmarking...", size_mb);
+        let json = generate_large_json(size_mb);
+        println!("Generated {} MB of JSON", json.len() / (1024 * 1024));
+        test_cases.push((format!("generated_{}mb", size_mb), json));
     }
 
     let mut group = c.benchmark_group("formatter_comparison");
 
-    for (name, content) in &file_cases {
+    for (name, content) in &test_cases {
         group.bench_with_input(
             BenchmarkId::new("jk", name),
             content.as_str(),

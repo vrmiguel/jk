@@ -122,7 +122,7 @@ impl<'a> Formatter<'a> {
                     }
                     writer.newline()?;
                     writer.indentation(depth)?;
-                    write!(writer, "\"{key}\": ")?;
+                    writer.write_key(key)?;
                 }
 
                 Event::String(s) => match self.context.last_mut() {
@@ -164,6 +164,7 @@ trait IoWriteExt {
     fn string(&mut self, s: &str) -> io::Result<()>;
     fn indentation(&mut self, indent: usize) -> io::Result<()>;
     fn event(&mut self, value: Event<'_>) -> io::Result<()>;
+    fn write_key(&mut self, key: &str) -> io::Result<()>;
 }
 
 impl<W: io::Write> IoWriteExt for W {
@@ -211,6 +212,13 @@ impl<W: io::Write> IoWriteExt for W {
         }
 
         Ok(())
+    }
+
+    #[inline(always)]
+    fn write_key(&mut self, key: &str) -> io::Result<()> {
+        self.byte(b'"')?;
+        self.write_all(key.as_bytes())?;
+        self.write_all(b"\": ")
     }
 }
 

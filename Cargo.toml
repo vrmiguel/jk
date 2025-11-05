@@ -19,6 +19,13 @@ thiserror = "2.0.17"
 jsax = { path = "crates/jsax" }
 memmap2 = "0.9.9"
 logos = "0.15.1"
+itoa = "1.0.15"
+
+[[bench]]
+name = "formatter_comparison"
+harness = false
 
 [dev-dependencies]
+criterion = "0.7.0"
 serde-transcode = "1.1.1"
+simd-json = "0.17.0"
