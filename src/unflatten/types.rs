@@ -9,8 +9,7 @@ pub struct GronLine<'a> {
 #[cfg_attr(test, derive(PartialEq, Debug))]
 pub struct Identifier<'a> {
     pub base: &'a str,
-    // TODO: this has to be `Vec<Index<'a>>`
-    pub index: Option<Index<'a>>,
+    pub indices: Vec<Index<'a>>,
 }
 
 #[cfg_attr(test, derive(PartialEq, Debug))]

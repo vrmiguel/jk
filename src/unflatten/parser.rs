@@ -36,6 +36,7 @@ impl<'source> Parser<'source> {
 
     fn parse_identifier(&mut self) -> anyhow::Result<bool> {
         let mut current_base: Option<&'source str> = None;
+        let mut current_indices: Vec<Index<'source>> = Vec::new();
         let mut expect_identifier = true;
         let mut found_any_token = false;
 
@@ -45,49 +46,51 @@ impl<'source> Parser<'source> {
 
             match token {
                 GronToken::Identifier(name) if expect_identifier => {
-                    // Start of a new path component
+                    // If we have a pending identifier with indices, flush it
+                    if let Some(base) = current_base.take() {
+                        self.identifiers.push(Identifier {
+                            base,
+                            indices: std::mem::take(&mut current_indices),
+                        });
+                    }
+                    // Start new identifier
                     current_base = Some(name);
                     expect_identifier = false;
                 }
 
-                GronToken::BracketOpen if current_base.is_some() => {
-                    // Expecting an index (number or string)
+                GronToken::BracketOpen => {
+                    // Parse the index inside brackets and add to current indices
                     match self.lexer.next() {
                         Some(Ok(GronToken::Number(num))) => {
-                            // Push identifier with numeric index
-                            self.identifiers.push(Identifier {
-                                base: current_base.take().unwrap(),
-                                index: Some(Index::Numeric(num)),
-                            });
-
+                            current_indices.push(Index::Numeric(num));
                             self.must_lex(GronToken::BracketClose)?;
                         }
                         Some(Ok(GronToken::String(s))) => {
-                            // Push identifier with string index
-                            self.identifiers.push(Identifier {
-                                base: current_base.take().unwrap(),
-                                index: Some(Index::String(s)),
-                            });
-
-                            // Must now find a closing bracket
+                            current_indices.push(Index::String(s));
                             self.must_lex(GronToken::BracketClose)?;
                         }
                         _ => anyhow::bail!("Expected number or string index inside brackets"),
                     }
                 }
 
-                GronToken::Dot if current_base.is_some() => {
-                    // Push the current identifier (no index) and expect next identifier
-                    self.identifiers.push(Identifier {
-                        base: current_base.take().unwrap(),
-                        index: None,
-                    });
+                GronToken::Dot => {
+                    // Flush the current identifier and expect next one
+                    if let Some(base) = current_base.take() {
+                        self.identifiers.push(Identifier {
+                            base,
+                            indices: std::mem::take(&mut current_indices),
+                        });
+                    }
                     expect_identifier = true;
                 }
 
                 GronToken::Equals => {
+                    // Flush any pending identifier
                     if let Some(base) = current_base.take() {
-                        self.identifiers.push(Identifier { base, index: None });
+                        self.identifiers.push(Identifier {
+                            base,
+                            indices: current_indices,
+                        });
                     }
                     return Ok(true);
                 }
@@ -161,7 +164,7 @@ mod tests {
             Some(GronLine {
                 identifier: vec![Identifier {
                     base: "json",
-                    index: None
+                    indices: vec![]
                 }],
                 value: GronValue::Object
             })
@@ -173,11 +176,11 @@ mod tests {
                 identifier: vec![
                     Identifier {
                         base: "json",
-                        index: None
+                        indices: vec![]
                     },
                     Identifier {
                         base: "address",
-                        index: None
+                        indices: vec![]
                     }
                 ],
                 value: GronValue::Object
@@ -190,15 +193,15 @@ mod tests {
                 identifier: vec![
                     Identifier {
                         base: "json",
-                        index: None
+                        indices: vec![]
                     },
                     Identifier {
                         base: "address",
-                        index: None
+                        indices: vec![]
                     },
                     Identifier {
                         base: "street",
-                        index: None
+                        indices: vec![]
                     }
                 ],
                 value: GronValue::String("123 Main St")
@@ -218,7 +221,7 @@ mod tests {
             Some(GronLine {
                 identifier: vec![Identifier {
                     base: "json",
-                    index: None
+                    indices: vec![]
                 }],
                 value: GronValue::Object
             })
@@ -230,11 +233,11 @@ mod tests {
                 identifier: vec![
                     Identifier {
                         base: "json",
-                        index: None
+                        indices: vec![]
                     },
                     Identifier {
                         base: "hobbies",
-                        index: Some(Index::Numeric("0"))
+                        indices: vec![Index::Numeric("0")]
                     }
                 ],
                 value: GronValue::String("reading")
@@ -247,14 +250,158 @@ mod tests {
                 identifier: vec![
                     Identifier {
                         base: "json",
-                        index: None
+                        indices: vec![]
                     },
                     Identifier {
                         base: "hobbies",
-                        index: Some(Index::Numeric("1"))
+                        indices: vec![Index::Numeric("1")]
                     }
                 ],
                 value: GronValue::String("cycling")
+            })
+        );
+    }
+
+    #[test]
+    fn parse_nested_numeric_index() {
+        let gron = "json = {};\njson.hobbies = [];\njson.hobbies[0] = [];\njson.hobbies[0][0] = \"reading\";\njson.hobbies[0][1] = \"cycling\";\njson.hobbies[1] = [];\njson.hobbies[1][0] = \"swimming\";\njson.hobbies[1][1] = \"dancing\";";
+        let mut parser = Parser::new(gron);
+
+        // json = {};
+        assert_eq!(
+            parser.parse_next_line().unwrap(),
+            Some(GronLine {
+                identifier: vec![Identifier {
+                    base: "json",
+                    indices: vec![]
+                }],
+                value: GronValue::Object
+            })
+        );
+
+        // json.hobbies = [];
+        assert_eq!(
+            parser.parse_next_line().unwrap(),
+            Some(GronLine {
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        indices: vec![]
+                    },
+                    Identifier {
+                        base: "hobbies",
+                        indices: vec![]
+                    }
+                ],
+                value: GronValue::Array
+            })
+        );
+
+        // json.hobbies[0] = [];
+        assert_eq!(
+            parser.parse_next_line().unwrap(),
+            Some(GronLine {
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        indices: vec![]
+                    },
+                    Identifier {
+                        base: "hobbies",
+                        indices: vec![Index::Numeric("0")]
+                    }
+                ],
+                value: GronValue::Array
+            })
+        );
+
+        // json.hobbies[0][0] = "reading";
+        assert_eq!(
+            parser.parse_next_line().unwrap(),
+            Some(GronLine {
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        indices: vec![]
+                    },
+                    Identifier {
+                        base: "hobbies",
+                        indices: vec![Index::Numeric("0"), Index::Numeric("0")]
+                    }
+                ],
+                value: GronValue::String("reading")
+            })
+        );
+
+        // json.hobbies[0][1] = "cycling";
+        assert_eq!(
+            parser.parse_next_line().unwrap(),
+            Some(GronLine {
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        indices: vec![]
+                    },
+                    Identifier {
+                        base: "hobbies",
+                        indices: vec![Index::Numeric("0"), Index::Numeric("1")]
+                    }
+                ],
+                value: GronValue::String("cycling")
+            })
+        );
+
+        // json.hobbies[1] = [];
+        assert_eq!(
+            parser.parse_next_line().unwrap(),
+            Some(GronLine {
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        indices: vec![]
+                    },
+                    Identifier {
+                        base: "hobbies",
+                        indices: vec![Index::Numeric("1")]
+                    }
+                ],
+                value: GronValue::Array
+            })
+        );
+
+        // json.hobbies[1][0] = "swimming";
+        assert_eq!(
+            parser.parse_next_line().unwrap(),
+            Some(GronLine {
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        indices: vec![]
+                    },
+                    Identifier {
+                        base: "hobbies",
+                        indices: vec![Index::Numeric("1"), Index::Numeric("0")]
+                    }
+                ],
+                value: GronValue::String("swimming")
+            })
+        );
+
+        // json.hobbies[1][1] = "dancing";
+        assert_eq!(
+            parser.parse_next_line().unwrap(),
+            Some(GronLine {
+                identifier: vec![
+                    Identifier {
+                        base: "json",
+                        indices: vec![]
+                    },
+                    Identifier {
+                        base: "hobbies",
+                        indices: vec![Index::Numeric("1"), Index::Numeric("1")]
+                    }
+                ],
+                value: GronValue::String("dancing")
             })
         );
     }
@@ -269,7 +416,7 @@ mod tests {
             Some(GronLine {
                 identifier: vec![Identifier {
                     base: "json",
-                    index: None
+                    indices: vec![]
                 }],
                 value: GronValue::Object
             })
@@ -281,11 +428,11 @@ mod tests {
                 identifier: vec![
                     Identifier {
                         base: "json",
-                        index: None
+                        indices: vec![]
                     },
                     Identifier {
                         base: "hobbies",
-                        index: Some(Index::String("hobbies oh my hobbies"))
+                        indices: vec![Index::String("hobbies oh my hobbies")]
                     }
                 ],
                 value: GronValue::String("reading")
@@ -298,11 +445,11 @@ mod tests {
                 identifier: vec![
                     Identifier {
                         base: "json",
-                        index: None
+                        indices: vec![]
                     },
                     Identifier {
                         base: "hobbies",
-                        index: Some(Index::Numeric("1"))
+                        indices: vec![Index::Numeric("1")]
                     }
                 ],
                 value: GronValue::String("cycling")

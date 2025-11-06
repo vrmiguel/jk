@@ -52,40 +52,88 @@ pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
         let mut entry = &mut root;
 
         for (idx, component) in components {
-            if idx == components_amount - 1 {
-                match component.index {
-                    Some(index) => {
-                        if component.base != root_name {
-                            entry = entry
-                                .as_object_mut()
-                                .unwrap()
-                                .get_mut(component.base)
-                                .unwrap();
-                        }
+            let is_last = idx == components_amount - 1;
+            let is_root = component.base == root_name;
 
-                        match index {
-                            Index::Numeric(idx) => {
-                                let idx: usize = idx.parse().unwrap();
-                                // TODO: validate idx against length of array?
-                                let arr = entry.as_array_mut().unwrap();
-                                while arr.len() <= idx {
-                                    arr.push(Value::Null); // Fill gaps with null
-                                }
-                                arr[idx] = value.to_value();
+            // Handle an index at the root (e.g. json[0])
+            if is_root {
+                if component.indices.is_empty() {
+                    continue;
+                }
+
+                let indices_to_navigate = if is_last {
+                    &component.indices[..component.indices.len() - 1]
+                } else {
+                    &component.indices[..]
+                };
+
+                for index in indices_to_navigate {
+                    entry = apply_single_index(entry, index)?;
+                }
+
+                if is_last {
+                    let last_index = component.indices.last().unwrap();
+                    match last_index {
+                        Index::Numeric(idx_str) => {
+                            let idx: usize = idx_str.parse().unwrap();
+                            let arr = entry.as_array_mut().unwrap();
+                            while arr.len() <= idx {
+                                arr.push(Value::Null);
                             }
-                            Index::String(key) => {
-                                entry.as_object_mut().unwrap().insert(key, value.to_value());
-                            }
+                            arr[idx] = value.to_value();
                         }
-                    }
-                    None => {
-                        let obj = entry.as_object_mut().unwrap();
-                        obj.insert(component.base, value.to_value());
+                        Index::String(key) => {
+                            entry.as_object_mut().unwrap().insert(key, value.to_value());
+                        }
                     }
                 }
+                continue;
+            }
+
+            // Last component and no indices: direct field assignment
+            if is_last && component.indices.is_empty() {
+                entry
+                    .as_object_mut()
+                    .with_context(|| "Expected object")?
+                    .insert(component.base, value.to_value());
+                break;
+            }
+
+            // if in an object: navigate to current base
+            entry = entry
+                .as_object_mut()
+                .with_context(|| "Expected object")?
+                .get_mut(component.base)
+                .with_context(|| format!("Path not found: {}", component.base))?;
+
+            // Determine how many indices to navigate through
+            let indices_to_navigate = if is_last {
+                // For the last component, navigate through all but the last index
+                &component.indices[..component.indices.len() - 1]
             } else {
-                if component.base != root_name {
-                    entry = navigate_to(entry, component.base, component.index)?;
+                // For intermediate components, navigate through all indices
+                &component.indices[..]
+            };
+
+            for index in indices_to_navigate {
+                entry = apply_single_index(entry, index)?;
+            }
+
+            // Last component: set the value at the final index
+            if is_last {
+                let last_index = component.indices.last().unwrap();
+                match last_index {
+                    Index::Numeric(idx_str) => {
+                        let idx: usize = idx_str.parse().unwrap();
+                        let arr = entry.as_array_mut().unwrap();
+                        while arr.len() <= idx {
+                            arr.push(Value::Null); // Fill gaps with null
+                        }
+                        arr[idx] = value.to_value();
+                    }
+                    Index::String(key) => {
+                        entry.as_object_mut().unwrap().insert(key, value.to_value());
+                    }
                 }
             }
         }
@@ -94,41 +142,50 @@ pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
     Ok(root)
 }
 
-fn navigate_to<'data, 'borrow>(
+/// Follow a single index in order to navigate
+fn apply_single_index<'data, 'borrow>(
     entry: &'borrow mut Value<'data>,
-    base: &str,
-    index: Option<Index<'_>>,
-) -> anyhow::Result<&'borrow mut Value<'data>> {
-    // First navigate to base (object key lookup)
-    let entry = entry
-        .as_object_mut()
-        .with_context(|| "Expected object")?
-        .get_mut(base)
-        .with_context(|| format!("Path not found: {}", base))?;
-
-    apply_index(entry, index)
-}
-
-fn apply_index<'data, 'borrow>(
-    entry: &'borrow mut Value<'data>,
-    index: Option<Index<'_>>,
+    index: &Index<'data>,
 ) -> anyhow::Result<&'borrow mut Value<'data>> {
     match index {
-        Some(Index::Numeric(idx)) => {
-            let idx: usize = idx
+        Index::Numeric(idx_str) => {
+            let idx: usize = idx_str
                 .parse()
-                .with_context(|| format!("Invalid array index: {}", idx))?;
+                .with_context(|| format!("Invalid array index: {}", idx_str))?;
             entry
                 .as_array_mut()
                 .with_context(|| "Expected array")?
                 .get_mut(idx)
                 .with_context(|| format!("Array index out of bounds: {}", idx))
         }
-        Some(Index::String(key)) => entry
+        Index::String(key) => entry
             .as_object_mut()
             .with_context(|| "Expected object")?
             .get_mut(key)
             .with_context(|| format!("Object key not found: {}", key)),
-        None => Ok(entry),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unflatten_nested_arrays() {
+        let input = r#"json = {};
+json.hobbies = [];
+json.hobbies[0] = [];
+json.hobbies[0][0] = "reading";
+json.hobbies[0][1] = "cycling";
+json.hobbies[1] = [];
+json.hobbies[1][0] = "swimming";
+json.hobbies[1][1] = "dancing";"#;
+
+        let result = unflatten_to_value(input);
+        assert!(result.is_ok(), "Failed to unflatten: {:?}", result.err());
+
+        let value = result.unwrap();
+        let json_str = serde_json::to_string(&value).unwrap();
+        assert!(json_str.contains("hobbies"));
     }
 }
