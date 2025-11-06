@@ -450,6 +450,7 @@ dependencies = [
  "itoa",
  "jsax",
  "lexopt",
+ "libc",
  "logos",
  "memmap2",
  "rapidhash",
@@ -459,6 +460,7 @@ dependencies = [
  "serde_json",
  "simd-json",
  "thiserror 2.0.17",
+ "winapi-util",
 ]
 
 [[package]]

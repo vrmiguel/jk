@@ -1,12 +1,17 @@
 use std::{
-    io::{self, BufWriter},
+    io::{self, BufWriter, Write},
     process::ExitCode,
 };
 
+use jk::fmt::WriterConfig;
 use jsax::Parser;
 use lexopt::Arg;
 
-use crate::{node::Node, source::Source, utils::is_stdin_readable};
+use crate::{
+    node::Node,
+    source::Source,
+    utils::{is_stdin_readable, should_use_colors},
+};
 
 /// A version of serde_json::Value that tracks which parts of it are collapsed/expanded
 mod node;
@@ -106,10 +111,21 @@ fn run() -> anyhow::Result<()> {
         Command::Fmt => {
             let source = source.load()?;
 
+            let use_colors = should_use_colors();
+
+            let config = WriterConfig {
+                use_color: should_use_colors(),
+                indent_width: 2,
+            };
+
             let stdout = io::stdout();
-            let writer = BufWriter::new(stdout.lock());
-            jk::fmt::Formatter::new(Parser::new(source.as_str()?)).format_to(writer)?;
-            // TODO: print a final newline if output is not being piped
+            let mut writer = BufWriter::new(stdout.lock());
+            jk::fmt::Formatter::new(Parser::new(source.as_str()?))
+                .format_to(&mut writer, config)?;
+            if use_colors {
+                writer.write_all(b"\n")?;
+            }
+            writer.flush()?;
         }
         Command::Help => {
             unreachable!()

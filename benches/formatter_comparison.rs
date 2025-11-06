@@ -1,7 +1,7 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use jk::Formatter;
+use jk::{Formatter, fmt::WriterConfig};
 use jsax::Parser;
 
 fn generate_large_json(target_mb: usize) -> String {
@@ -43,7 +43,7 @@ fn generate_large_json(target_mb: usize) -> String {
 fn format_to_string(input: &str) -> String {
     let mut bytes = Vec::new();
     Formatter::new(Parser::new(input))
-        .format_to(&mut bytes)
+        .format_to(&mut bytes, WriterConfig::default())
         .unwrap();
     String::from_utf8(bytes).unwrap()
 }

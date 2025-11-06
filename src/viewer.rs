@@ -23,10 +23,10 @@ pub fn start_viewer(root: Node) -> anyhow::Result<()> {
             })
             .expect("failed to draw frame");
 
-        if let Event::Key(key) = event::read().expect("failed to read event") {
-            if ctx.handle_key_event(key) {
-                break;
-            }
+        if let Event::Key(key) = event::read().expect("failed to read event")
+            && ctx.handle_key_event(key)
+        {
+            break;
         }
     }
     ratatui::restore();
