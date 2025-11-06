@@ -3,7 +3,6 @@ use std::{
     process::ExitCode,
 };
 
-use jk::fmt::WriterConfig;
 use jsax::Parser;
 use lexopt::Arg;
 
@@ -106,22 +105,22 @@ fn run() -> anyhow::Result<()> {
         }
         Command::Unflatten => {
             let source = source.load()?;
-            jk::unflatten::unflatten(source.as_str()?)?;
+            jk::unflatten::unflatten(source.as_str()?, should_use_colors())?;
         }
         Command::Fmt => {
             let source = source.load()?;
 
             let use_colors = should_use_colors();
 
-            let config = WriterConfig {
-                use_color: should_use_colors(),
-                indent_width: 2,
-            };
-
             let stdout = io::stdout();
             let mut writer = BufWriter::new(stdout.lock());
-            jk::fmt::Formatter::new(Parser::new(source.as_str()?))
-                .format_to(&mut writer, config)?;
+            if use_colors {
+                jk::fmt::Formatter::new_colored(Parser::new(source.as_str()?))
+                    .format_to(&mut writer)?;
+            } else {
+                jk::fmt::Formatter::new_plain(Parser::new(source.as_str()?))
+                    .format_to(&mut writer)?;
+            }
             if use_colors {
                 writer.write_all(b"\n")?;
             }

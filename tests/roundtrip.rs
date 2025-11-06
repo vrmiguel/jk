@@ -1,20 +1,19 @@
 use std::io::BufWriter;
 
-use jk::fmt::WriterConfig;
 use jsax::Parser;
 
 fn format_value(value: &jk::Value<'_>) -> String {
     let mut output = Vec::new();
-    jk::fmt::Formatter::new(jk::ValueEvents::new(value))
-        .format_to(&mut output, WriterConfig::default())
+    jk::fmt::Formatter::new_plain(jk::ValueEvents::new(value))
+        .format_to(&mut output)
         .unwrap();
     String::from_utf8(output).unwrap()
 }
 
 fn format_json_str(json_str: &str) -> String {
     let mut output = Vec::new();
-    jk::fmt::Formatter::new(Parser::new(json_str))
-        .format_to(&mut output, WriterConfig::default())
+    jk::fmt::Formatter::new_plain(Parser::new(json_str))
+        .format_to(&mut output)
         .unwrap();
     String::from_utf8(output).unwrap()
 }

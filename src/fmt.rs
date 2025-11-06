@@ -5,8 +5,6 @@ use jsax::{Event, Parser};
 
 use crate::borrowed_value::ValueEvents;
 
-// hyperfine --warmup 10 "jk-before-event-source fmt citm_catalog.json" "jk-before-spanned fmt citm_catalog.json" "jk-new-2 fmt citm_catalog.json" "jk fmt citm_catalog.json"
-
 pub trait EventSource {
     fn next_event(&mut self) -> Result<Option<Event<'_>>, jsax::Error>;
 }
@@ -24,29 +22,42 @@ impl EventSource for Parser<'_> {
     }
 }
 
-struct Writer<W: io::Write> {
+impl<S: EventSource> Formatter<S, true> {
+    pub fn new_colored(source: S) -> Self {
+        Self {
+            source,
+            context: Vec::with_capacity(4),
+        }
+    }
+}
+
+impl<S: EventSource> Formatter<S, false> {
+    pub fn new_plain(source: S) -> Self {
+        Self {
+            source,
+            context: Vec::with_capacity(4),
+        }
+    }
+}
+
+struct Writer<W: io::Write, const USE_COLORS: bool> {
     inner: W,
-    config: WriterConfig,
 }
 
 #[derive(Clone)]
 pub struct WriterConfig {
-    pub use_color: bool,
     pub indent_width: usize,
 }
 
 impl Default for WriterConfig {
     fn default() -> Self {
-        Self {
-            use_color: false,
-            indent_width: 2,
-        }
+        Self { indent_width: 2 }
     }
 }
 
-impl<W: io::Write> Writer<W> {
-    pub fn new(inner: W, config: WriterConfig) -> Self {
-        Self { inner, config }
+impl<W: io::Write, const USE_COLORS: bool> Writer<W, USE_COLORS> {
+    pub fn new(inner: W) -> Self {
+        Self { inner }
     }
 
     fn indentation(&mut self, depth: usize) -> io::Result<()> {
@@ -84,7 +95,7 @@ impl<W: io::Write> Writer<W> {
 
     #[inline]
     fn write_colored(&mut self, color: &'static [u8], content: &[u8]) -> io::Result<()> {
-        if self.config.use_color {
+        if USE_COLORS {
             self.inner.write_all(color)?;
             self.inner.write_all(content)?;
             self.inner.write_all(Self::RESET)?;
@@ -101,7 +112,7 @@ impl<W: io::Write> Writer<W> {
 
     #[inline]
     pub fn string_value(&mut self, s: &str) -> io::Result<()> {
-        if self.config.use_color {
+        if USE_COLORS {
             self.inner.write_all(Self::GREEN)?;
             self.byte(b'"')?;
             self.inner.write_all(s.as_bytes())?;
@@ -117,7 +128,7 @@ impl<W: io::Write> Writer<W> {
 
     #[inline]
     pub fn key(&mut self, key: &str) -> io::Result<()> {
-        if self.config.use_color {
+        if USE_COLORS {
             self.inner.write_all(Self::BOLD_BLUE)?;
             self.byte(b'"')?;
             self.inner.write_all(key.as_bytes())?;
@@ -170,7 +181,7 @@ impl<W: io::Write> Writer<W> {
     }
 }
 
-pub struct Formatter<S: EventSource> {
+pub struct Formatter<S: EventSource, const USE_COLORS: bool> {
     source: S,
     context: Vec<Context>,
 }
@@ -191,7 +202,7 @@ enum CtxKind {
 /// - Configurable indentation width
 /// - Indent with tab or spaces
 /// - Don't pretty print (flag to print minified instead)
-impl<S: EventSource> Formatter<S> {
+impl<S: EventSource, const USE_COLORS: bool> Formatter<S, USE_COLORS> {
     pub fn new(source: S) -> Self {
         Self {
             source,
@@ -199,12 +210,8 @@ impl<S: EventSource> Formatter<S> {
         }
     }
 
-    pub fn format_to<W: io::Write>(
-        &mut self,
-        output: W,
-        config: WriterConfig,
-    ) -> anyhow::Result<()> {
-        let mut writer = Writer::new(output, config);
+    pub fn format_to<W: io::Write>(&mut self, output: W) -> anyhow::Result<()> {
+        let mut writer: Writer<W, USE_COLORS> = Writer::new(output);
         let mut depth = 0;
 
         while let Some(event) = self.source.next_event()? {
@@ -335,13 +342,13 @@ impl<S: EventSource> Formatter<S> {
 mod tests {
     use jsax::Parser;
 
-    use crate::fmt::{Formatter, WriterConfig};
+    use crate::fmt::Formatter;
 
     fn format_to_string(input: &str) -> String {
         let mut bytes = Vec::new();
 
-        Formatter::new(Parser::new(input))
-            .format_to(&mut bytes, WriterConfig::default())
+        Formatter::new_plain(Parser::new(input))
+            .format_to(&mut bytes)
             .unwrap();
 
         String::from_utf8(bytes).unwrap()
