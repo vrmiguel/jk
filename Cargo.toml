@@ -29,3 +29,9 @@ harness = false
 criterion = "0.7.0"
 serde-transcode = "1.1.1"
 simd-json = "0.17.0"
+
+[target.'cfg(windows)'.dependencies.winapi-util]
+version = "0.1.6"
+
+[target.'cfg(unix)'.dependencies.libc]
+version = "0.2.148"

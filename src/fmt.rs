@@ -1,5 +1,12 @@
 use std::io;
 
+use anyhow::Context as AnyContext;
+use jsax::{Event, Parser};
+
+use crate::borrowed_value::ValueEvents;
+
+// hyperfine --warmup 10 "jk-before-event-source fmt citm_catalog.json" "jk-before-spanned fmt citm_catalog.json" "jk-new-2 fmt citm_catalog.json" "jk fmt citm_catalog.json"
+
 pub trait EventSource {
     fn next_event(&mut self) -> Result<Option<Event<'_>>, jsax::Error>;
 }
@@ -17,10 +24,152 @@ impl EventSource for Parser<'_> {
     }
 }
 
-use anyhow::Context as AnyContext;
-use jsax::{Event, Parser};
+struct Writer<W: io::Write> {
+    inner: W,
+    config: WriterConfig,
+}
 
-use crate::borrowed_value::ValueEvents;
+#[derive(Clone)]
+pub struct WriterConfig {
+    pub use_color: bool,
+    pub indent_width: usize,
+}
+
+impl Default for WriterConfig {
+    fn default() -> Self {
+        Self {
+            use_color: false,
+            indent_width: 2,
+        }
+    }
+}
+
+impl<W: io::Write> Writer<W> {
+    pub fn new(inner: W, config: WriterConfig) -> Self {
+        Self { inner, config }
+    }
+
+    fn indentation(&mut self, depth: usize) -> io::Result<()> {
+        // TODO: make configurable
+        let indent = depth * 2;
+        const INDENT: &[u8; 64] = &[b' '; 64];
+
+        let full = indent / INDENT.len();
+        let rem = indent % INDENT.len();
+
+        for _ in 0..full {
+            self.write(INDENT)?;
+        }
+        if rem != 0 {
+            self.write(&INDENT[..rem])?;
+        }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn newline(&mut self) -> io::Result<()> {
+        self.inner.write_all(b"\n")
+    }
+
+    #[inline(always)]
+    fn byte(&mut self, byte: u8) -> io::Result<()> {
+        self.inner.write_all(&[byte])
+    }
+
+    const RESET: &'static [u8] = b"\x1b[0m";
+    const BOLD_WHITE: &'static [u8] = b"\x1b[1;39m";
+    const BOLD_BLUE: &'static [u8] = b"\x1b[1;34m";
+    const GREEN: &'static [u8] = b"\x1b[0;32m";
+    const NORMAL_WHITE: &'static [u8] = b"\x1b[0;39m";
+
+    #[inline]
+    fn write_colored(&mut self, color: &'static [u8], content: &[u8]) -> io::Result<()> {
+        if self.config.use_color {
+            self.inner.write_all(color)?;
+            self.inner.write_all(content)?;
+            self.inner.write_all(Self::RESET)?;
+        } else {
+            self.inner.write_all(content)?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn structural_char(&mut self, byte: u8) -> io::Result<()> {
+        self.write_colored(Self::BOLD_WHITE, &[byte])
+    }
+
+    #[inline]
+    pub fn string_value(&mut self, s: &str) -> io::Result<()> {
+        if self.config.use_color {
+            self.inner.write_all(Self::GREEN)?;
+            self.byte(b'"')?;
+            self.inner.write_all(s.as_bytes())?;
+            self.byte(b'"')?;
+            self.inner.write_all(Self::RESET)?;
+        } else {
+            self.byte(b'"')?;
+            self.inner.write_all(s.as_bytes())?;
+            self.byte(b'"')?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn key(&mut self, key: &str) -> io::Result<()> {
+        if self.config.use_color {
+            self.inner.write_all(Self::BOLD_BLUE)?;
+            self.byte(b'"')?;
+            self.inner.write_all(key.as_bytes())?;
+            self.byte(b'"')?;
+            self.inner.write_all(Self::RESET)?;
+            self.structural_char(b':')?;
+            self.byte(b' ')?;
+        } else {
+            self.byte(b'"')?;
+            self.inner.write_all(key.as_bytes())?;
+            self.write(b"\": ")?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn number(&mut self, n: &str) -> io::Result<()> {
+        self.write_colored(Self::NORMAL_WHITE, n.as_bytes())
+    }
+
+    #[inline]
+    pub fn boolean(&mut self, b: bool) -> io::Result<()> {
+        let s = if b {
+            "true".as_bytes()
+        } else {
+            "false".as_bytes()
+        };
+        self.write_colored(Self::NORMAL_WHITE, s)
+    }
+
+    #[inline]
+    pub fn null(&mut self) -> io::Result<()> {
+        self.write_colored(Self::NORMAL_WHITE, b"null")
+    }
+
+    #[inline]
+    pub fn event(&mut self, value: Event<'_>) -> io::Result<()> {
+        match value {
+            Event::String(s) => self.string_value(s),
+            Event::Number(n) => self.number(n),
+            Event::Boolean(b) => self.boolean(b),
+            Event::Null => self.null(),
+            _ => Ok(()),
+        }
+    }
+
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.inner.write_all(buf)
+    }
+}
+
 pub struct Formatter<S: EventSource> {
     source: S,
     context: Vec<Context>,
@@ -50,7 +199,12 @@ impl<S: EventSource> Formatter<S> {
         }
     }
 
-    pub fn format_to<W: io::Write>(&mut self, mut writer: W) -> anyhow::Result<()> {
+    pub fn format_to<W: io::Write>(
+        &mut self,
+        output: W,
+        config: WriterConfig,
+    ) -> anyhow::Result<()> {
+        let mut writer = Writer::new(output, config);
         let mut depth = 0;
 
         while let Some(event) = self.source.next_event()? {
@@ -60,20 +214,20 @@ impl<S: EventSource> Formatter<S> {
                     if let Some(ctx) = self.context.last_mut() {
                         if ctx.kind == CtxKind::Array {
                             if ctx.wrote_first {
-                                writer.byte(b',')?;
+                                writer.structural_char(b',')?;
                             } else {
                                 ctx.wrote_first = true;
                             }
                             writer.newline()?;
                             writer.indentation(depth)?;
-                            writer.byte(b'{')?;
+                            writer.structural_char(b'{')?;
                         } else {
                             // After a key
-                            writer.byte(b'{')?;
+                            writer.structural_char(b'{')?;
                         }
                     } else {
                         // Root level object started
-                        writer.byte(b'{')?;
+                        writer.structural_char(b'{')?;
                     }
                     self.context.push(Context {
                         kind: CtxKind::Object,
@@ -91,26 +245,26 @@ impl<S: EventSource> Formatter<S> {
                         writer.newline()?;
                         writer.indentation(depth)?;
                     }
-                    writer.byte(b'}')?;
+                    writer.structural_char(b'}')?;
                 }
 
                 Event::StartArray => {
                     if let Some(ctx) = self.context.last_mut() {
                         if ctx.kind == CtxKind::Array {
                             if ctx.wrote_first {
-                                writer.byte(b',')?;
+                                writer.structural_char(b',')?;
                             } else {
                                 ctx.wrote_first = true;
                             }
                             writer.newline()?;
                             writer.indentation(depth)?;
-                            writer.byte(b'[')?;
+                            writer.structural_char(b'[')?;
                         } else {
                             // After a key
-                            writer.byte(b'[')?;
+                            writer.structural_char(b'[')?;
                         }
                     } else {
-                        writer.byte(b'[')?;
+                        writer.structural_char(b'[')?;
                     }
                     self.context.push(Context {
                         kind: CtxKind::Array,
@@ -126,7 +280,7 @@ impl<S: EventSource> Formatter<S> {
                         writer.newline()?;
                         writer.indentation(depth)?;
                     }
-                    writer.byte(b']')?;
+                    writer.structural_char(b']')?;
                 }
 
                 Event::Key(key) => {
@@ -135,33 +289,33 @@ impl<S: EventSource> Formatter<S> {
                         .last_mut()
                         .context("Found a key, no matching object")?;
                     if ctx.wrote_first {
-                        writer.byte(b',')?;
+                        writer.structural_char(b',')?;
                     } else {
                         ctx.wrote_first = true;
                     }
                     writer.newline()?;
                     writer.indentation(depth)?;
-                    writer.write_key(key)?;
+                    writer.key(key)?;
                 }
 
                 Event::String(s) => match self.context.last_mut() {
                     Some(ctx) if ctx.kind == CtxKind::Array => {
                         if ctx.wrote_first {
-                            writer.byte(b',')?;
+                            writer.structural_char(b',')?;
                         } else {
                             ctx.wrote_first = true;
                         }
                         writer.newline()?;
                         writer.indentation(depth)?;
-                        writer.string(s)?;
+                        writer.string_value(s)?;
                     }
-                    _ => writer.string(s)?,
+                    _ => writer.string_value(s)?,
                 },
 
                 other => match self.context.last_mut() {
                     Some(ctx) if ctx.kind == CtxKind::Array => {
                         if ctx.wrote_first {
-                            writer.byte(b',')?;
+                            writer.structural_char(b',')?;
                         } else {
                             ctx.wrote_first = true;
                         }
@@ -177,81 +331,17 @@ impl<S: EventSource> Formatter<S> {
     }
 }
 
-trait IoWriteExt {
-    fn newline(&mut self) -> io::Result<()>;
-    fn byte(&mut self, c: u8) -> io::Result<()>;
-    fn string(&mut self, s: &str) -> io::Result<()>;
-    fn indentation(&mut self, indent: usize) -> io::Result<()>;
-    fn event(&mut self, value: Event<'_>) -> io::Result<()>;
-    fn write_key(&mut self, key: &str) -> io::Result<()>;
-}
-
-impl<W: io::Write> IoWriteExt for W {
-    #[inline(always)]
-    fn newline(&mut self) -> io::Result<()> {
-        self.write_all(b"\n")
-    }
-
-    #[inline(always)]
-    fn byte(&mut self, byte: u8) -> io::Result<()> {
-        self.write_all(&[byte])
-    }
-
-    #[inline]
-    fn string(&mut self, s: &str) -> io::Result<()> {
-        self.byte(b'"')?;
-        self.write_all(s.as_bytes())?;
-        self.byte(b'"')?;
-        Ok(())
-    }
-
-    #[inline]
-    fn indentation(&mut self, depth: usize) -> io::Result<()> {
-        // TODO: make configurable
-        let indent = depth * 2;
-        const INDENT: &[u8; 64] = &[b' '; 64];
-
-        let full = indent / INDENT.len();
-        let rem = indent % INDENT.len();
-
-        for _ in 0..full {
-            self.write_all(INDENT)?;
-        }
-        if rem != 0 {
-            self.write_all(&INDENT[..rem])?;
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn event(&mut self, value: Event<'_>) -> io::Result<()> {
-        match value {
-            Event::String(value) => self.string(value)?,
-            other => self.write_all(other.as_str().as_bytes())?,
-        }
-
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn write_key(&mut self, key: &str) -> io::Result<()> {
-        self.byte(b'"')?;
-        self.write_all(key.as_bytes())?;
-        self.write_all(b"\": ")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use jsax::Parser;
 
-    use crate::fmt::Formatter;
+    use crate::fmt::{Formatter, WriterConfig};
 
     fn format_to_string(input: &str) -> String {
         let mut bytes = Vec::new();
 
         Formatter::new(Parser::new(input))
-            .format_to(&mut bytes)
+            .format_to(&mut bytes, WriterConfig::default())
             .unwrap();
 
         String::from_utf8(bytes).unwrap()
