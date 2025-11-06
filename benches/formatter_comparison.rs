@@ -2,6 +2,7 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use jk::Formatter;
+use jsax::Parser;
 
 fn generate_large_json(target_mb: usize) -> String {
     let mut json = String::with_capacity(target_mb * 1024 * 1024);
@@ -41,7 +42,9 @@ fn generate_large_json(target_mb: usize) -> String {
 
 fn format_to_string(input: &str) -> String {
     let mut bytes = Vec::new();
-    Formatter::new(input).format_to(&mut bytes).unwrap();
+    Formatter::new(Parser::new(input))
+        .format_to(&mut bytes)
+        .unwrap();
     String::from_utf8(bytes).unwrap()
 }
 

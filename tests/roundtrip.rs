@@ -1,24 +1,40 @@
 use std::io::BufWriter;
 
+use jsax::Parser;
+
+fn format_value(value: &jk::Value<'_>) -> String {
+    let mut output = Vec::new();
+    jk::fmt::Formatter::new(jk::ValueEvents::new(value))
+        .format_to(&mut output)
+        .unwrap();
+    String::from_utf8(output).unwrap()
+}
+
+fn format_json_str(json_str: &str) -> String {
+    let mut output = Vec::new();
+    jk::fmt::Formatter::new(Parser::new(json_str))
+        .format_to(&mut output)
+        .unwrap();
+    String::from_utf8(output).unwrap()
+}
+
 fn roundtrip(json_str: &str) -> anyhow::Result<()> {
-    let mut flattened = Vec::new();
-    {
-        let writer = BufWriter::new(&mut flattened);
+    let original = format_json_str(json_str);
+
+    let flattened = {
+        let mut buf = Vec::new();
+        let writer = BufWriter::new(&mut buf);
         jk::flatten::flatten(json_str, writer)?;
-    }
+        dbg!(String::from_utf8(buf).unwrap())
+    };
 
-    let flattened_str = std::str::from_utf8(&flattened)?;
-    let unflattened = jk::unflatten::unflatten_to_value(flattened_str)?;
+    let unflattened = jk::unflatten::unflatten_to_value(&flattened)?;
 
-    let original: serde_json::Value = serde_json::from_str(json_str)?;
-    let result_json = serde_json::to_value(&unflattened)?;
+    let result_json = format_value(&unflattened);
 
     assert_eq!(
-        original,
-        result_json,
-        "Roundtrip failed!\nOriginal: {}\nResult: {}",
-        serde_json::to_string_pretty(&original).unwrap(),
-        serde_json::to_string_pretty(&result_json).unwrap()
+        original, result_json,
+        "Roundtrip failed!\nOriginal: {original}\nResult: {result_json}"
     );
 
     Ok(())
@@ -130,7 +146,6 @@ fn roundtrip_deeply_nested_arrays() {
 }
 
 #[test]
-#[ignore = "currently a bug: flatten not escaping special characters"]
 fn roundtrip_special_characters_in_strings() {
     let json = r#"{
         "quotes": "He said \"hello\"",
@@ -210,7 +225,6 @@ fn roundtrip_sample_data() {
 }
 
 #[test]
-#[ignore = "currently a bug: flatten not escaping"]
 fn roundtrip_sample_twitter() {
     let json = include_str!("../samples/twitter.json");
     roundtrip(json).unwrap();

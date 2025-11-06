@@ -2,7 +2,8 @@ use std::io::{BufWriter, Write, stdout};
 
 use anyhow::Context;
 
-use crate::borrowed_value::Value;
+use crate::borrowed_value::{Value, ValueEvents};
+use crate::fmt::Formatter;
 use crate::unflatten::{
     parser::Parser,
     types::{GronLine, GronValue, Index},
@@ -15,8 +16,7 @@ mod types;
 pub fn unflatten(input: &str) -> anyhow::Result<()> {
     let value = unflatten_to_value(input)?;
     let mut writer = BufWriter::new(stdout().lock());
-    serde_json::to_writer_pretty(&mut writer, &value)
-        .with_context(|| "failed to print out JSON")?;
+    Formatter::new(ValueEvents::new(&value)).format_to(&mut writer)?;
     writer.flush().with_context(|| "failed to flush output")?;
 
     Ok(())
@@ -185,7 +185,11 @@ json.hobbies[1][1] = "dancing";"#;
         assert!(result.is_ok(), "Failed to unflatten: {:?}", result.err());
 
         let value = result.unwrap();
-        let json_str = serde_json::to_string(&value).unwrap();
+        let mut output = Vec::new();
+        Formatter::new(ValueEvents::new(&value))
+            .format_to(&mut output)
+            .unwrap();
+        let json_str = String::from_utf8(output).unwrap();
         assert!(json_str.contains("hobbies"));
     }
 }

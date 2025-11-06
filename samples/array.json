@@ -1,7 +1,7 @@
 [
     {
         "address": {
-            "street": "123 Main St",
+            "street": "123 Main\nSt",
             "zip": "10001"
         },
         "age": 30,

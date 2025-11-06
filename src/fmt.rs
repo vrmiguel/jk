@@ -1,9 +1,28 @@
 use std::io;
 
+pub trait EventSource {
+    fn next_event(&mut self) -> Result<Option<Event<'_>>, jsax::Error>;
+}
+
+impl EventSource for ValueEvents<'_> {
+    fn next_event(&mut self) -> Result<Option<Event<'_>>, jsax::Error> {
+        Ok(self.next())
+    }
+}
+
+impl EventSource for Parser<'_> {
+    #[inline(always)]
+    fn next_event(&mut self) -> Result<Option<Event<'_>>, jsax::Error> {
+        self.parse_next()
+    }
+}
+
 use anyhow::Context as AnyContext;
 use jsax::{Event, Parser};
-pub struct Formatter<'a> {
-    parser: Parser<'a>,
+
+use crate::borrowed_value::ValueEvents;
+pub struct Formatter<S: EventSource> {
+    source: S,
     context: Vec<Context>,
 }
 
@@ -23,10 +42,10 @@ enum CtxKind {
 /// - Configurable indentation width
 /// - Indent with tab or spaces
 /// - Don't pretty print (flag to print minified instead)
-impl<'a> Formatter<'a> {
-    pub fn new(input: &'a str) -> Self {
+impl<S: EventSource> Formatter<S> {
+    pub fn new(source: S) -> Self {
         Self {
-            parser: Parser::new(input),
+            source,
             context: Vec::with_capacity(4),
         }
     }
@@ -34,7 +53,7 @@ impl<'a> Formatter<'a> {
     pub fn format_to<W: io::Write>(&mut self, mut writer: W) -> anyhow::Result<()> {
         let mut depth = 0;
 
-        while let Some(event) = self.parser.parse_next()? {
+        while let Some(event) = self.source.next_event()? {
             match event {
                 Event::StartObject => {
                     // Handle commas in arrays
@@ -224,12 +243,16 @@ impl<W: io::Write> IoWriteExt for W {
 
 #[cfg(test)]
 mod tests {
+    use jsax::Parser;
+
     use crate::fmt::Formatter;
 
     fn format_to_string(input: &str) -> String {
         let mut bytes = Vec::new();
 
-        Formatter::new(input).format_to(&mut bytes).unwrap();
+        Formatter::new(Parser::new(input))
+            .format_to(&mut bytes)
+            .unwrap();
 
         String::from_utf8(bytes).unwrap()
     }
