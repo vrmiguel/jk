@@ -44,17 +44,6 @@ struct Writer<W: io::Write, const USE_COLORS: bool> {
     inner: W,
 }
 
-#[derive(Clone)]
-pub struct WriterConfig {
-    pub indent_width: usize,
-}
-
-impl Default for WriterConfig {
-    fn default() -> Self {
-        Self { indent_width: 2 }
-    }
-}
-
 impl<W: io::Write, const USE_COLORS: bool> Writer<W, USE_COLORS> {
     pub fn new(inner: W) -> Self {
         Self { inner }

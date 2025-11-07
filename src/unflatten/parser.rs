@@ -15,7 +15,7 @@ impl<'source> Parser<'source> {
     pub fn new(source: &'source str) -> Self {
         Self {
             lexer: GronToken::lexer(source),
-            identifiers: Vec::new(),
+            identifiers: Vec::with_capacity(4),
         }
     }
 
@@ -129,7 +129,7 @@ impl<'source> Parser<'source> {
         self.must_lex(GronToken::Semicolon).map(|_| ())
     }
 
-    pub fn parse_next_line(&mut self) -> anyhow::Result<Option<GronLine<'source>>> {
+    pub fn parse_next_line(&mut self) -> anyhow::Result<Option<GronLine<'source, '_>>> {
         self.identifiers.clear();
 
         if !self.parse_identifier()? {
@@ -141,7 +141,7 @@ impl<'source> Parser<'source> {
         self.parse_semicolon()?;
 
         Ok(Some(GronLine {
-            identifier: std::mem::take(&mut self.identifiers),
+            identifier: &self.identifiers,
             value,
         }))
     }
@@ -162,7 +162,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![Identifier {
+                identifier: &[Identifier {
                     base: "json",
                     indices: vec![]
                 }],
@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![Identifier {
+                identifier: &[Identifier {
                     base: "json",
                     indices: vec![]
                 }],
@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -247,7 +247,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -271,7 +271,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![Identifier {
+                identifier: &[Identifier {
                     base: "json",
                     indices: vec![]
                 }],
@@ -283,7 +283,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -301,7 +301,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -337,7 +337,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -373,7 +373,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![Identifier {
+                identifier: &[Identifier {
                     base: "json",
                     indices: vec![]
                 }],
@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]
@@ -442,7 +442,7 @@ mod tests {
         assert_eq!(
             parser.parse_next_line().unwrap(),
             Some(GronLine {
-                identifier: vec![
+                identifier: &[
                     Identifier {
                         base: "json",
                         indices: vec![]

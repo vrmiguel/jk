@@ -1,8 +1,8 @@
 use crate::borrowed_value::Value;
 
 #[cfg_attr(test, derive(PartialEq, Debug))]
-pub struct GronLine<'a> {
-    pub identifier: Vec<Identifier<'a>>,
+pub struct GronLine<'a, 'b> {
+    pub identifier: &'b [Identifier<'a>],
     pub value: GronValue<'a>,
 }
 
