@@ -1,12 +1,6 @@
-use std::{
-    fmt::{self, Write as _},
-    mem,
-    ops::Range,
-};
+use std::{fmt, mem, ops::Range};
 
 use serde_json::Value;
-
-type JsonMap = serde_json::Map<String, Value>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct JsonLine<'a> {
@@ -34,6 +28,8 @@ impl<'a> FoldableJsonViewTree<'a> {
 
     #[cfg(test)]
     pub fn to_string(&self, range: Range<usize>) -> String {
+        use std::fmt::Write as _;
+
         let mut string = String::new();
         for row in self.display_rows(range) {
             let _ = write!(string, "{row}");
@@ -46,6 +42,7 @@ impl<'a> FoldableJsonViewTree<'a> {
             .update_is_collapsed(index, CollapseCommand::Collapse);
     }
 
+    #[allow(dead_code)]
     pub fn expand(&mut self, index: usize) {
         self.root
             .update_is_collapsed(index, CollapseCommand::Expand);
@@ -113,7 +110,7 @@ impl<'a> Node<'a> {
         let mut values = Vec::<Self>::new();
         let mut next_element_offset = offset;
 
-        while let Some((key, value)) = values_iter.next() {
+        for (key, value) in values_iter {
             let node = Node::new(key, value, next_element_offset);
             next_element_offset += node.length;
 
@@ -193,7 +190,7 @@ impl<'a> Node<'a> {
         };
 
         if let Some(CollapseLineDiff(diff)) = collapse_line_diff {
-            self.length = (self.length as isize + diff as isize) as usize;
+            self.length = (self.length as isize + diff) as usize;
         }
 
         collapse_line_diff
@@ -280,6 +277,7 @@ pub enum NodeKind<'a> {
     },
 }
 
+#[allow(dead_code)]
 impl NodeKind<'_> {
     pub fn is_collapsable(&self) -> bool {
         matches!(self, NodeKind::Collapsible { .. })

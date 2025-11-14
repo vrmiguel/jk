@@ -53,7 +53,7 @@ pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
     while let Some(GronLine { identifier, value }) = parser.parse_next_line()? {
         // TODO: validate root name
         let components_amount = identifier.len();
-        let components = identifier.into_iter().enumerate();
+        let components = identifier.iter().enumerate();
 
         let mut entry = &mut root;
 

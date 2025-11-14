@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::fold_tree::{DisplayRow, DisplayRowKind, FoldableJsonViewTree};
 
 pub fn start_viewer(json: &Value) -> anyhow::Result<()> {
-    let mut ctx = Ctx::new(&json);
+    let mut ctx = Ctx::new(json);
 
     let mut terminal = ratatui::init();
     loop {
@@ -173,7 +173,7 @@ fn draw(frame: &mut Frame, ctx: &Ctx) {
 }
 
 fn should_add_comma(current: &DisplayRow, next: Option<&DisplayRow>) -> bool {
-    next.map_or(false, |n| n.depth == current.depth)
+    next.is_some_and(|n| n.depth == current.depth)
 }
 
 fn render_display_row(row: &DisplayRow, needs_comma: bool) -> Vec<Span<'static>> {
