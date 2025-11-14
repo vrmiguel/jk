@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::{
     fmt::{self, Write as _},
     mem,
@@ -12,8 +10,8 @@ type JsonMap = serde_json::Map<String, Value>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct JsonLine<'a> {
-    key: Option<&'a str>,
-    value: &'a Value,
+    pub key: Option<&'a str>,
+    pub value: &'a Value,
 }
 
 #[derive(Debug)]
@@ -145,7 +143,7 @@ impl<'a> Node<'a> {
             NodeKind::Collapsible {
                 is_collapsed,
                 nested_contents: contents,
-                line,
+                line: _,
             } => {
                 // Check if current node is the target one
                 if target_remaining_offset == 0 {

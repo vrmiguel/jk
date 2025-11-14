@@ -7,14 +7,11 @@ use jsax::Parser;
 use lexopt::Arg;
 
 use crate::{
-    node::Node,
     source::Source,
     utils::{is_stdin_readable, should_use_colors},
 };
 
-/// A version of serde_json::Value that tracks which parts of it are collapsed/expanded
-mod node;
-// daora?
+/// A foldable (sum-)tree
 mod fold_tree;
 mod source;
 mod utils;
@@ -95,8 +92,7 @@ fn run() -> anyhow::Result<()> {
         Command::View => {
             let source = source.load()?;
             let json = serde_json::from_slice(source.as_bytes()).unwrap();
-            let root = Node::from_value(json);
-            viewer::start_viewer(root)?;
+            viewer::start_viewer(&json)?;
         }
         Command::Flatten => {
             let source = source.load()?;
