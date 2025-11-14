@@ -87,7 +87,7 @@ impl<'a> Node<'a> {
                 Self {
                     length: original_range.len(),
                     original_range,
-                    kind: NodeKind::Collapsable {
+                    kind: NodeKind::Collapsible {
                         is_collapsed: false,
                         nested_contents: inner_contents.map(Box::new),
                         line: JsonLine { key, value },
@@ -97,7 +97,7 @@ impl<'a> Node<'a> {
             None => Self {
                 length: 1,
                 original_range: line_offset..line_offset + 1,
-                kind: NodeKind::NonCollapsable {
+                kind: NodeKind::NonCollapsible {
                     lines: Vec::from([JsonLine { key, value }]),
                 },
             },
@@ -120,7 +120,7 @@ impl<'a> Node<'a> {
 
             // merge any two consecutive NonCollapsable regions
             if let Some(last) = values.last_mut()
-                && let NodeKind::NonCollapsable {
+                && let NodeKind::NonCollapsible {
                     lines: last_node_lines,
                 } = &mut last.kind
             {
@@ -141,8 +141,8 @@ impl<'a> Node<'a> {
         command: CollapseCommand,
     ) -> Option<CollapseLineDiff> {
         let collapse_line_diff = match &mut self.kind {
-            NodeKind::NonCollapsable { .. } => None,
-            NodeKind::Collapsable {
+            NodeKind::NonCollapsible { .. } => None,
+            NodeKind::Collapsible {
                 is_collapsed,
                 nested_contents: contents,
                 line,
@@ -211,7 +211,7 @@ impl<'a> Node<'a> {
         }
 
         match &self.kind {
-            NodeKind::NonCollapsable {
+            NodeKind::NonCollapsible {
                 lines: json_references,
             } => {
                 for (i, &line) in json_references.iter().enumerate() {
@@ -226,7 +226,7 @@ impl<'a> Node<'a> {
                     }
                 }
             }
-            NodeKind::Collapsable {
+            NodeKind::Collapsible {
                 line,
                 is_collapsed,
                 nested_contents: contents,
@@ -264,16 +264,16 @@ impl<'a> Node<'a> {
 #[derive(Debug, Clone)]
 pub enum NodeKind<'a> {
     /// One or multiple lines of non-collapsable json elements.
-    NonCollapsable { lines: Vec<JsonLine<'a>> },
+    NonCollapsible { lines: Vec<JsonLine<'a>> },
     /// A single collapsable element (array or object) and it's contents.
-    Collapsable {
+    Collapsible {
         line: JsonLine<'a>,
         is_collapsed: bool,
         nested_contents: Option<Box<Node<'a>>>,
     },
     /// A sequence of nodes that can be searched in logarithmic time.
     ///
-    /// Can only appear as the `contents` field of a NodeKind::Collapsable.
+    /// Can only appear as the `nested_contents` field of a NodeKind::Collapsible.
     SubTree {
         left: Box<Node<'a>>,
         right: Box<Node<'a>>,
@@ -282,7 +282,7 @@ pub enum NodeKind<'a> {
 
 impl NodeKind<'_> {
     pub fn is_collapsable(&self) -> bool {
-        matches!(self, NodeKind::Collapsable { .. })
+        matches!(self, NodeKind::Collapsible { .. })
     }
 
     pub fn is_path(&self) -> bool {
@@ -290,7 +290,7 @@ impl NodeKind<'_> {
     }
 
     pub fn is_non_collapsable(&self) -> bool {
-        matches!(self, NodeKind::NonCollapsable { .. })
+        matches!(self, NodeKind::NonCollapsible { .. })
     }
 }
 
