@@ -357,27 +357,24 @@ fn node_array_into_tree(mut nodes: Vec<Node>) -> Option<Node> {
     assert!(!nodes.is_empty());
 
     while nodes.len() > 1 {
-        let taken = mem::take(&mut nodes);
+        let mut taken = mem::take(&mut nodes).into_iter();
+
         nodes = Vec::new();
 
-        for chunk in taken.chunks(2) {
-            match chunk {
-                [left, right] => {
-                    let original_range = left.original_range.start..right.original_range.end;
-                    nodes.push(Node {
-                        length: original_range.len(),
-                        original_range,
-                        kind: NodeKind::SubTree {
-                            left: Box::new(left.clone()),
-                            right: Box::new(right.clone()),
-                        },
-                    });
-                }
-                [last] => {
-                    nodes.push(last.clone());
-                }
-                _ => unreachable!(),
-            }
+        while let Some(left) = taken.next() {
+            let Some(right) = taken.next() else {
+                nodes.push(left);
+                break;
+            };
+            let original_range = left.original_range.start..right.original_range.end;
+            nodes.push(Node {
+                length: original_range.len(),
+                original_range,
+                kind: NodeKind::SubTree {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+            });
         }
     }
 
