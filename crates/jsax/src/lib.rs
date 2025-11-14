@@ -206,11 +206,11 @@ impl<'source> Parser<'source> {
         }
     }
 
-    pub fn parse_next_spanned(&mut self) -> Result<Option<(Event<'_>, Range<usize>)>, Error> {
+    pub fn parse_next_spanned(&mut self) -> Result<Option<(Event<'source>, Range<usize>)>, Error> {
         self.parse_next_internal()
     }
 
-    pub fn parse_next(&mut self) -> Result<Option<Event<'_>>, Error> {
+    pub fn parse_next(&mut self) -> Result<Option<Event<'source>>, Error> {
         self.parse_next_internal()
             .map(|opt| opt.map(|(event, _)| event))
     }
@@ -218,7 +218,7 @@ impl<'source> Parser<'source> {
     // Inlining here is a win for `parse_next`'s performance, since the compiler
     // seems to optimize away the unused span logic
     #[inline(always)]
-    fn parse_next_internal(&mut self) -> Result<Option<(Event<'_>, Range<usize>)>, Error> {
+    fn parse_next_internal(&mut self) -> Result<Option<(Event<'source>, Range<usize>)>, Error> {
         while let Some(token) = self.lexer.next() {
             let token = token.unwrap();
             self.last_token = token;

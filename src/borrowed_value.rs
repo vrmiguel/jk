@@ -38,6 +38,114 @@ impl<'a> Value<'a> {
     }
 }
 
+#[allow(unused)]
+pub fn parse(text: &str) -> Result<Value<'_>, jsax::Error> {
+    let mut parser = jsax::Parser::new(text);
+    let mut stack = Vec::new();
+    let mut key_stack = Vec::new();
+
+    while let Some(event) = parser.parse_next()? {
+        match event {
+            Event::StartObject => {
+                stack.push(Value::object());
+                key_stack.push(None);
+            }
+
+            Event::EndObject { .. } => {
+                let completed = stack.pop().expect("stack underflow on EndObject");
+                key_stack.pop();
+
+                if stack.is_empty() {
+                    return Ok(completed);
+                }
+
+                let current_key = key_stack.last_mut().unwrap();
+                add_to_parent_with_key(&mut stack, current_key, completed);
+            }
+
+            Event::StartArray => {
+                stack.push(Value::array());
+                key_stack.push(None);
+            }
+
+            Event::EndArray { .. } => {
+                let completed = stack.pop().expect("stack underflow on EndArray");
+                key_stack.pop();
+
+                if stack.is_empty() {
+                    return Ok(completed);
+                }
+
+                let current_key = key_stack.last_mut().unwrap();
+                add_to_parent_with_key(&mut stack, current_key, completed);
+            }
+
+            Event::Key(key) => {
+                *key_stack.last_mut().unwrap() = Some(key);
+            }
+
+            Event::Null => {
+                let value = Value::Null;
+                if stack.is_empty() {
+                    return Ok(value);
+                }
+                let current_key = key_stack.last_mut().unwrap();
+                add_to_parent_with_key(&mut stack, current_key, value);
+            }
+
+            Event::Boolean(b) => {
+                let value = Value::Bool(b);
+                if stack.is_empty() {
+                    return Ok(value);
+                }
+                let current_key = key_stack.last_mut().unwrap();
+                add_to_parent_with_key(&mut stack, current_key, value);
+            }
+
+            Event::Number(n) => {
+                let value = Value::Number(n);
+                if stack.is_empty() {
+                    return Ok(value);
+                }
+                let current_key = key_stack.last_mut().unwrap();
+                add_to_parent_with_key(&mut stack, current_key, value);
+            }
+
+            Event::String(s) => {
+                let value = Value::String(s);
+                if stack.is_empty() {
+                    return Ok(value);
+                }
+                let current_key = key_stack.last_mut().unwrap();
+                add_to_parent_with_key(&mut stack, current_key, value);
+            }
+        }
+    }
+
+    Err(jsax::Error::Unexpected(
+        "empty or incomplete JSON".to_string(),
+    ))
+}
+
+fn add_to_parent_with_key<'a>(
+    stack: &mut Vec<Value<'a>>,
+    current_key: &mut Option<&'a str>,
+    value: Value<'a>,
+) {
+    let parent = stack.last_mut().expect("parent container missing");
+
+    match parent {
+        Value::Object(map) => {
+            let key = current_key.take().expect("key missing for object entry");
+            map.insert(key, value);
+        }
+        Value::Array(arr) => {
+            arr.push(value);
+        }
+        _ => panic!("parent must be Object or Array"),
+    }
+}
+
 pub struct ValueEvents<'a> {
     stack: Vec<State<'a>>,
 }
@@ -138,8 +246,18 @@ impl<'a> Iterator for ValueEvents<'a> {
 
 #[cfg(test)]
 mod tests {
+    use jsax::Parser;
+
     use super::*;
-    use crate::unflatten::unflatten_to_value;
+    use crate::{Formatter, unflatten::unflatten_to_value};
+
+    fn format_value(value: &Value<'_>) -> String {
+        let mut output = Vec::new();
+        Formatter::new_plain(ValueEvents::new(value))
+            .format_to(&mut output)
+            .unwrap();
+        String::from_utf8(output).unwrap()
+    }
 
     #[test]
     fn test_value_events() {
@@ -158,5 +276,148 @@ json.hobbies[1][1] = "dancing";"#;
         let events = events.collect::<Vec<_>>();
         // assert_eq!(events.len(), 1);
         dbg!(events);
+    }
+
+    #[test]
+    fn test_parse_primitives() {
+        let null = parse("null").unwrap();
+        assert!(matches!(null, Value::Null));
+
+        let bool_true = parse("true").unwrap();
+        assert!(matches!(bool_true, Value::Bool(true)));
+
+        let bool_false = parse("false").unwrap();
+        assert!(matches!(bool_false, Value::Bool(false)));
+
+        let num = parse("42").unwrap();
+        assert!(matches!(num, Value::Number("42")));
+
+        let string = parse(r#""hello""#).unwrap();
+        assert!(matches!(string, Value::String("hello")));
+    }
+
+    #[test]
+    fn test_parse_empty_containers() {
+        let empty_obj = parse("{}").unwrap();
+        match empty_obj {
+            Value::Object(map) => assert_eq!(map.len(), 0),
+            _ => panic!("expected Object"),
+        }
+
+        let empty_arr = parse("[]").unwrap();
+        match empty_arr {
+            Value::Array(arr) => assert_eq!(arr.len(), 0),
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn test_parse_simple_object() {
+        let json = r#"{"name": "Alice", "age": 30, "active": true}"#;
+        let value = parse(json).unwrap();
+
+        match value {
+            Value::Object(map) => {
+                assert_eq!(map.len(), 3);
+                assert!(matches!(map.get("name"), Some(Value::String("Alice"))));
+                assert!(matches!(map.get("age"), Some(Value::Number("30"))));
+                assert!(matches!(map.get("active"), Some(Value::Bool(true))));
+            }
+            _ => panic!("expected Object"),
+        }
+    }
+
+    #[test]
+    fn test_parse_twitter_json() {
+        fn format_str(json: &str) -> String {
+            let mut output = Vec::new();
+            Formatter::new_plain(Parser::new(json))
+                .format_to(&mut output)
+                .unwrap();
+            String::from_utf8(output).unwrap()
+        }
+
+        let json = include_str!("../samples/twitter.json");
+        let value = parse(json).unwrap();
+        let formatted_from_value = format_value(&value);
+        let formatted_from_str = format_str(json);
+        assert_eq!(formatted_from_value, formatted_from_str);
+    }
+
+    #[test]
+    fn test_parse_simple_array() {
+        let json = r#"[1, "two", true, null]"#;
+        let value = parse(json).unwrap();
+
+        match value {
+            Value::Array(arr) => {
+                assert_eq!(arr.len(), 4);
+                assert!(matches!(arr[0], Value::Number("1")));
+                assert!(matches!(arr[1], Value::String("two")));
+                assert!(matches!(arr[2], Value::Bool(true)));
+                assert!(matches!(arr[3], Value::Null));
+            }
+            _ => panic!("expected Array"),
+        }
+    }
+
+    #[test]
+    fn test_parse_nested_structures() {
+        let json = r#"{"users": [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]}"#;
+        let value = parse(json).unwrap();
+
+        match value {
+            Value::Object(map) => match map.get("users") {
+                Some(Value::Array(users)) => {
+                    assert_eq!(users.len(), 2);
+                    match &users[0] {
+                        Value::Object(user) => {
+                            assert!(matches!(user.get("name"), Some(Value::String("Alice"))));
+                            assert!(matches!(user.get("age"), Some(Value::Number("30"))));
+                        }
+                        _ => panic!("expected Object in array"),
+                    }
+                }
+                _ => panic!("expected Array for users"),
+            },
+            _ => panic!("expected Object"),
+        }
+    }
+
+    #[test]
+    fn test_parse_nested() {
+        let json = r#"{"a": {"b": {"c": {"d": "deep"}}}}"#;
+        let value = parse(json).unwrap();
+
+        if let Value::Object(a) = value {
+            if let Some(Value::Object(b)) = a.get("a") {
+                if let Some(Value::Object(c)) = b.get("b") {
+                    if let Some(Value::Object(d)) = c.get("c") {
+                        assert!(matches!(d.get("d"), Some(Value::String("deep"))));
+                        return;
+                    }
+                }
+            }
+        }
+        panic!("failed to traverse nested structure");
+    }
+
+    #[test]
+    fn test_parse_array_of_arrays() {
+        let json = r#"[[1, 2], [3, 4], [5, 6]]"#;
+        let value = parse(json).unwrap();
+
+        match value {
+            Value::Array(outer) => {
+                assert_eq!(outer.len(), 3);
+                for arr in outer {
+                    match arr {
+                        Value::Array(inner) => assert_eq!(inner.len(), 2),
+                        _ => panic!("expected inner Array"),
+                    }
+                }
+            }
+            _ => panic!("expected Array"),
+        }
     }
 }
