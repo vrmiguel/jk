@@ -208,19 +208,19 @@ impl<'a> Node<'a> {
         }
 
         match &self.kind {
-            NodeKind::NonCollapsible {
-                lines: json_references,
-            } => {
-                for (i, &line) in json_references.iter().enumerate() {
-                    if range.contains(&(current_offset + i)) {
-                        rows.push(DisplayRow {
-                            depth,
-                            kind: DisplayRowKind::Element {
-                                line,
-                                is_collapsed: false,
-                            },
-                        });
-                    }
+            NodeKind::NonCollapsible { lines } => {
+                let start_idx = range.start.saturating_sub(current_offset);
+                let end_idx = range.end.saturating_sub(current_offset).min(lines.len());
+
+                // Iterate through the intersection of NonCollapsible lines with the target range
+                for &line in &lines[start_idx..end_idx] {
+                    rows.push(DisplayRow {
+                        depth,
+                        kind: DisplayRowKind::Element {
+                            line,
+                            is_collapsed: false,
+                        },
+                    });
                 }
             }
             NodeKind::Collapsible {
