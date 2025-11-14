@@ -27,6 +27,8 @@ harness = false
 
 [dev-dependencies]
 criterion = "0.7.0"
+indoc = "2.0.7"
+pretty_assertions = "1.4.1"
 serde-transcode = "1.1.1"
 simd-json = "0.17.0"
 

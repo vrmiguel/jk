@@ -6,12 +6,12 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
+use serde_json::Value;
 
-use crate::node::{DisplayLine, Node};
+use crate::fold_tree::{DisplayRow, DisplayRowKind, FoldableJsonViewTree};
 
-pub fn start_viewer(root: Node) -> anyhow::Result<()> {
-    let mut ctx = Ctx::new(root);
-    ctx.build_visible_lines();
+pub fn start_viewer(json: &Value) -> anyhow::Result<()> {
+    let mut ctx = Ctx::new(json);
 
     let mut terminal = ratatui::init();
     loop {
@@ -33,37 +33,32 @@ pub fn start_viewer(root: Node) -> anyhow::Result<()> {
     Ok(())
 }
 
-struct Ctx {
-    root: Node,
+struct Ctx<'a> {
+    tree: FoldableJsonViewTree<'a>,
     cursor: usize,
-    visible_lines: Vec<DisplayLine>,
     scroll_offset: usize,
     /// Viewport height as per the last frame rendered
     viewport_height: usize,
 }
 
-impl Ctx {
-    fn new(root: Node) -> Self {
+impl<'a> Ctx<'a> {
+    fn new(json: &'a Value) -> Self {
+        let tree = FoldableJsonViewTree::new(json);
+
         Self {
-            root,
+            tree,
             cursor: 0,
-            visible_lines: Vec::new(),
             scroll_offset: 0,
             viewport_height: 0,
         }
     }
 
-    fn build_visible_lines(&mut self) {
-        self.visible_lines = self.root.render_lines();
-    }
-
-    fn get_visible_lines(&self) -> &[DisplayLine] {
-        &self.visible_lines
+    fn total_lines(&self) -> usize {
+        self.tree.display_rows(0..usize::MAX).len()
     }
 
     fn toggle_current(&mut self) {
-        let mut line_counter = 0;
-        self.root.toggle_at_line(self.cursor, &mut line_counter);
+        self.tree.toggle(self.cursor);
     }
 
     fn move_cursor_up(&mut self) {
@@ -96,14 +91,11 @@ impl Ctx {
     }
 
     fn collapse_current(&mut self) {
-        let mut line_counter = 0;
-        self.root
-            .collapse_at_line_if_expanded(self.cursor, &mut line_counter);
+        self.tree.collapse(self.cursor);
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> bool {
-        let num_lines = self.get_visible_lines().len();
-        let mut dirty = false;
+        let num_lines = self.total_lines();
 
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return true,
@@ -113,18 +105,11 @@ impl Ctx {
             KeyCode::PageDown => self.page_down(num_lines, self.viewport_height),
             KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Right | KeyCode::Char('l') => {
                 self.toggle_current();
-                dirty = true;
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                // TODO(vini): drop this, keep only toggling?
                 self.collapse_current();
-                dirty = true;
             }
             _ => {}
-        }
-
-        if dirty {
-            self.build_visible_lines();
         }
 
         self.adjust_scroll();
@@ -139,16 +124,22 @@ fn viewport_height(area: Rect) -> usize {
 }
 
 fn draw(frame: &mut Frame, ctx: &Ctx) {
-    let display_lines = ctx.get_visible_lines();
-
     let start = ctx.scroll_offset;
-    let end = (start + ctx.viewport_height).min(display_lines.len());
+    let end = start + ctx.viewport_height;
+
+    let display_rows = ctx.tree.display_rows(
+        // One more than we'll actually render, so we can check the next row for whether we should add a comma or not
+        start..end + 1,
+    );
 
     let mut lines: Vec<Line> = Vec::new();
 
-    for (i, display_line) in display_lines[start..end].iter().enumerate() {
+    for (i, display_row) in display_rows.iter().take(ctx.viewport_height).enumerate() {
         let actual_line_index = start + i;
-        let mut line_spans = display_line.spans.clone();
+        let next_row = display_rows.get(i + 1);
+        let needs_comma = should_add_comma(display_row, next_row);
+
+        let mut line_spans = render_display_row(display_row, needs_comma);
 
         if actual_line_index == ctx.cursor {
             line_spans.insert(
@@ -160,6 +151,7 @@ fn draw(frame: &mut Frame, ctx: &Ctx) {
                         .add_modifier(Modifier::BOLD),
                 ),
             );
+
             line_spans = line_spans
                 .into_iter()
                 .map(|span| Span::styled(span.content, span.style.bg(Color::DarkGray)))
@@ -178,4 +170,81 @@ fn draw(frame: &mut Frame, ctx: &Ctx) {
         Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL));
 
     frame.render_widget(paragraph, frame.area());
+}
+
+fn should_add_comma(current: &DisplayRow, next: Option<&DisplayRow>) -> bool {
+    next.is_some_and(|n| n.depth == current.depth)
+}
+
+fn render_display_row(row: &DisplayRow, needs_comma: bool) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+
+    let indent = "  ".repeat(row.depth);
+    if !indent.is_empty() {
+        spans.push(Span::raw(indent));
+    }
+
+    match &row.kind {
+        DisplayRowKind::ClosingSymbol { symbol } => {
+            spans.push(Span::styled(
+                symbol.to_string(),
+                Style::default().fg(Color::Gray),
+            ));
+        }
+        DisplayRowKind::Element { line, is_collapsed } => {
+            if let Some(key) = line.key {
+                spans.push(Span::styled(
+                    format!("\"{}\"", key),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(": ", Style::default().fg(Color::Gray)));
+            }
+
+            match line.value {
+                Value::Null => {
+                    spans.push(Span::styled("null", Style::default().fg(Color::Red)));
+                }
+                Value::Bool(b) => {
+                    spans.push(Span::styled(
+                        b.to_string(),
+                        Style::default().fg(Color::Magenta),
+                    ));
+                }
+                Value::Number(n) => {
+                    spans.push(Span::styled(
+                        n.to_string(),
+                        Style::default().fg(Color::Yellow),
+                    ));
+                }
+                Value::String(s) => {
+                    spans.push(Span::styled(
+                        format!("\"{}\"", s),
+                        Style::default().fg(Color::Green),
+                    ));
+                }
+                Value::Array(_) => {
+                    spans.push(Span::styled("[", Style::default().fg(Color::Gray)));
+                    if *is_collapsed {
+                        spans.push(Span::styled(" ... ", Style::default().fg(Color::DarkGray)));
+                        spans.push(Span::styled("]", Style::default().fg(Color::Gray)));
+                    }
+                }
+                Value::Object(_) => {
+                    spans.push(Span::styled("{", Style::default().fg(Color::Gray)));
+                    if *is_collapsed {
+                        spans.push(Span::styled(" ... ", Style::default().fg(Color::DarkGray)));
+                        spans.push(Span::styled("}", Style::default().fg(Color::Gray)));
+                    }
+                }
+            }
+        }
+    }
+
+    if needs_comma {
+        spans.push(Span::styled(",", Style::default().fg(Color::Gray)));
+    }
+
+    spans
 }

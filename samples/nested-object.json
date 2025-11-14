@@ -1,35 +1,28 @@
 {
-    "name": "John Doe",
-    "age": 30,
-    "city": "New York",
-    "hobbies": [
-        "reading",
-        "cycling"
-    ],
+  "name": "John Doe",
+  "age": 30,
+  "city": "New York",
+  "hobbies": ["reading", "cycling"],
+  "address": {
+    "street": "123 Main St",
+    "zip": "10001"
+  },
+  "empt1": {},
+  "empt2": [],
+  "object": {
+    "name": "Jane Doe",
+    "age": 25,
+    "city": "Los Angeles",
+    "hobbies": ["swimming", "dancing"],
     "address": {
-        "street": "123 Main St",
-        "zip": "10001"
+      "street": "456 Main St",
+      "zip": "10002"
     },
-    "object": {
-        "name": "Jane Doe",
-        "age": 25,
-        "city": "Los Angeles",
-        "hobbies": [
-            "swimming",
-            "dancing"
-        ],
-        "address": {
-            "street": "456 Main St",
-            "zip": "10002"
-        },
-        "object3": {
-            "name": "John Doe",
-            "age": 30,
-            "city": "New York",
-            "hobbies": [
-                "reading",
-                "cycling"
-            ]
-        }
+    "object3": {
+      "name": "John Doe",
+      "age": 30,
+      "city": "New York",
+      "hobbies": ["reading", "cycling"]
     }
+  }
 }

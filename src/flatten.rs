@@ -39,6 +39,7 @@ pub fn flatten<W: IoWrite>(input: &str, mut writer: W) -> anyhow::Result<()> {
     let mut stack = Vec::with_capacity(4);
 
     #[inline]
+    #[allow(clippy::ptr_arg)]
     fn update_path_after_value(stack: &mut Vec<ContextFrame>, path: &mut String) {
         match stack.last_mut() {
             Some(ContextFrame::Array {

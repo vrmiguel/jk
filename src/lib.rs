@@ -4,6 +4,8 @@ mod borrowed_value;
 pub mod flatten;
 /// A JSON formatter
 pub mod fmt;
+/// Foldable tree structure for efficient JSON viewing
+pub mod fold_tree;
 /// Reverts `jk flatten` to its original form
 pub mod unflatten;
 
