@@ -11,8 +11,6 @@ use crate::{
     utils::{is_stdin_readable, should_use_colors},
 };
 
-/// A foldable (sum-)tree
-mod fold_tree;
 mod source;
 mod utils;
 /// The interactive TUI JSON viewer
@@ -91,7 +89,7 @@ fn run() -> anyhow::Result<()> {
     match command {
         Command::View => {
             let source = source.load()?;
-            let json = serde_json::from_slice(source.as_bytes()).unwrap();
+            let json = jk::borrowed_value::parse_value(source.as_str()?).unwrap();
             viewer::start_viewer(&json)?;
         }
         Command::Flatten => {

@@ -4,7 +4,7 @@ use rapidhash::fast::RandomState;
 
 pub type Map<'a> = IndexMap<&'a str, Value<'a>, RandomState>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Value<'a> {
     Null,
     Bool(bool),
@@ -38,8 +38,7 @@ impl<'a> Value<'a> {
     }
 }
 
-#[allow(unused)]
-pub fn parse(text: &str) -> Result<Value<'_>, jsax::Error> {
+pub fn parse_value(text: &str) -> Result<Value<'_>, jsax::Error> {
     let mut parser = jsax::Parser::new(text);
     let mut stack = Vec::new();
     let mut key_stack = Vec::new();
@@ -280,31 +279,31 @@ json.hobbies[1][1] = "dancing";"#;
 
     #[test]
     fn test_parse_primitives() {
-        let null = parse("null").unwrap();
+        let null = parse_value("null").unwrap();
         assert!(matches!(null, Value::Null));
 
-        let bool_true = parse("true").unwrap();
+        let bool_true = parse_value("true").unwrap();
         assert!(matches!(bool_true, Value::Bool(true)));
 
-        let bool_false = parse("false").unwrap();
+        let bool_false = parse_value("false").unwrap();
         assert!(matches!(bool_false, Value::Bool(false)));
 
-        let num = parse("42").unwrap();
+        let num = parse_value("42").unwrap();
         assert!(matches!(num, Value::Number("42")));
 
-        let string = parse(r#""hello""#).unwrap();
+        let string = parse_value(r#""hello""#).unwrap();
         assert!(matches!(string, Value::String("hello")));
     }
 
     #[test]
     fn test_parse_empty_containers() {
-        let empty_obj = parse("{}").unwrap();
+        let empty_obj = parse_value("{}").unwrap();
         match empty_obj {
             Value::Object(map) => assert_eq!(map.len(), 0),
             _ => panic!("expected Object"),
         }
 
-        let empty_arr = parse("[]").unwrap();
+        let empty_arr = parse_value("[]").unwrap();
         match empty_arr {
             Value::Array(arr) => assert_eq!(arr.len(), 0),
             _ => panic!("expected Array"),
@@ -314,7 +313,7 @@ json.hobbies[1][1] = "dancing";"#;
     #[test]
     fn test_parse_simple_object() {
         let json = r#"{"name": "Alice", "age": 30, "active": true}"#;
-        let value = parse(json).unwrap();
+        let value = parse_value(json).unwrap();
 
         match value {
             Value::Object(map) => {
@@ -338,7 +337,7 @@ json.hobbies[1][1] = "dancing";"#;
         }
 
         let json = include_str!("../samples/twitter.json");
-        let value = parse(json).unwrap();
+        let value = parse_value(json).unwrap();
         let formatted_from_value = format_value(&value);
         let formatted_from_str = format_str(json);
         assert_eq!(formatted_from_value, formatted_from_str);
@@ -347,7 +346,7 @@ json.hobbies[1][1] = "dancing";"#;
     #[test]
     fn test_parse_simple_array() {
         let json = r#"[1, "two", true, null]"#;
-        let value = parse(json).unwrap();
+        let value = parse_value(json).unwrap();
 
         match value {
             Value::Array(arr) => {
@@ -364,7 +363,7 @@ json.hobbies[1][1] = "dancing";"#;
     #[test]
     fn test_parse_nested_structures() {
         let json = r#"{"users": [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]}"#;
-        let value = parse(json).unwrap();
+        let value = parse_value(json).unwrap();
 
         match value {
             Value::Object(map) => match map.get("users") {
@@ -387,7 +386,7 @@ json.hobbies[1][1] = "dancing";"#;
     #[test]
     fn test_parse_nested() {
         let json = r#"{"a": {"b": {"c": {"d": "deep"}}}}"#;
-        let value = parse(json).unwrap();
+        let value = parse_value(json).unwrap();
 
         if let Value::Object(a) = value {
             if let Some(Value::Object(b)) = a.get("a") {
@@ -405,7 +404,7 @@ json.hobbies[1][1] = "dancing";"#;
     #[test]
     fn test_parse_array_of_arrays() {
         let json = r#"[[1, 2], [3, 4], [5, 6]]"#;
-        let value = parse(json).unwrap();
+        let value = parse_value(json).unwrap();
 
         match value {
             Value::Array(outer) => {

@@ -1,4 +1,6 @@
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
+use jk::Value;
+use jk::fold_tree::{DisplayRow, DisplayRowKind, FoldableJsonViewTree};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -6,9 +8,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
-use serde_json::Value;
-
-use crate::fold_tree::{DisplayRow, DisplayRowKind, FoldableJsonViewTree};
 
 pub fn start_viewer(json: &Value) -> anyhow::Result<()> {
     let mut ctx = Ctx::new(json);

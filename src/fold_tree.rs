@@ -1,11 +1,11 @@
 use std::{fmt, mem, ops::Range};
 
-use serde_json::Value;
+use crate::Value;
 
 #[derive(Debug, Clone, Copy)]
 pub struct JsonLine<'a> {
     pub key: Option<&'a str>,
-    pub value: &'a Value,
+    pub value: &'a Value<'a>,
 }
 
 #[derive(Debug)]
@@ -70,7 +70,7 @@ impl<'a> Node<'a> {
                 Some(Self::new_from_contents(iter, line_offset + 1))
             }
             Value::Object(object) => {
-                let iter = object.iter().map(|(k, v)| (Some(k.as_str()), v));
+                let iter = object.iter().map(|(k, v)| (Some(*k), v));
                 Some(Self::new_from_contents(iter, line_offset + 1))
             }
             _ => None,
@@ -102,7 +102,7 @@ impl<'a> Node<'a> {
 
     fn new_from_contents<I>(values_iter: I, offset: usize) -> Option<Self>
     where
-        I: Iterator<Item = (Option<&'a str>, &'a Value)> + 'a,
+        I: Iterator<Item = (Option<&'a str>, &'a Value<'a>)> + 'a,
     {
         let mut values_iter = values_iter.peekable();
         values_iter.peek()?; // early return
@@ -338,8 +338,8 @@ impl fmt::Display for DisplayRow<'_> {
                 match line.value {
                     Value::Null => writeln!(f, "null")?,
                     Value::Bool(boo) => writeln!(f, "{boo}")?,
-                    Value::Number(number) => writeln!(f, "{number}")?,
-                    Value::String(string) => writeln!(f, "\"{string}\"")?,
+                    Value::Number(n) => writeln!(f, "{n}")?,
+                    Value::String(s) => writeln!(f, "\"{s}\"")?,
                     Value::Array(_) => {
                         writeln!(f, "[{}", if *is_collapsed { " ]" } else { "" })?;
                     }
@@ -404,13 +404,13 @@ struct CollapseLineDiff(isize);
 mod tests {
     use indoc::indoc;
     use pretty_assertions::assert_eq;
-    use serde_json::json;
 
     use super::*;
+    use crate::borrowed_value;
 
     #[test]
     fn test_fold_tree() {
-        let json = json!({
+        let json_str = r#"{
             "hobbies": [
                 [
                     "reading",
@@ -421,7 +421,8 @@ mod tests {
                     "dancing"
                 ]
             ]
-        });
+        }"#;
+        let json = borrowed_value::parse_value(json_str).unwrap();
 
         let mut tree = FoldableJsonViewTree::new(&json);
 
