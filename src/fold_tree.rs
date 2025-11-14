@@ -145,28 +145,31 @@ impl<'a> Node<'a> {
             NodeKind::Collapsable {
                 is_collapsed,
                 nested_contents: contents,
-                ..
+                line,
             } => {
                 // Check if current node is the target one
                 if target_remaining_offset == 0 {
-                    let save_length = self.length;
+                    let saved_length = self.length as isize;
 
-                    self.length = match (command, *is_collapsed) {
+                    let diff = match (command, *is_collapsed) {
                         (CollapseCommand::Collapse, _) | (CollapseCommand::Toggle, false) => {
                             *is_collapsed = true;
-                            1
+                            1 - saved_length // collapsed element has length 1 now
                         }
                         (CollapseCommand::Expand, _) | (CollapseCommand::Toggle, true) => {
                             *is_collapsed = false;
-                            self.original_range.len()
+                            self.original_range.len() as isize - saved_length // restore original length
                         }
                     };
 
-                    // return early here to skip the step below this match
-                    return Some(CollapseLineDiff(
-                        self.length as isize - save_length as isize,
-                    ));
-                } else if let Some(contents) = contents {
+                    if diff == 0 {
+                        None // skip updating parents
+                    } else {
+                        Some(CollapseLineDiff(diff))
+                    }
+                } else if let Some(contents) = contents
+                    && !*is_collapsed
+                {
                     // Call recursively to next node till we find the target
                     //
                     // Arithmetic Safety:
@@ -179,10 +182,10 @@ impl<'a> Node<'a> {
                 }
             }
             NodeKind::SubTree { left, right } => {
-                if target_remaining_offset <= left.length {
+                if target_remaining_offset < left.length {
                     left.update_is_collapsed(target_remaining_offset, command)
                 } else if target_remaining_offset <= left.length + right.length {
-                    right.update_is_collapsed(left.length + target_remaining_offset, command)
+                    right.update_is_collapsed(target_remaining_offset - left.length, command)
                 } else {
                     None
                 }
@@ -427,19 +430,6 @@ mod tests {
 
         let mut tree = FoldableJsonViewTree::new(&json);
 
-        tree.collapse(0);
-        let expected = "{ }\n";
-        assert_eq!(expected, tree.to_string(0..20));
-
-        tree.expand(0);
-        tree.collapse(1);
-        let expected = indoc! {r#"{
-              "hobbies": [ ]
-            }
-        "#};
-        assert_eq!(expected, tree.to_string(0..20));
-
-        tree.expand(1);
         tree.collapse(2);
         let expected = indoc! {r#"{
             "hobbies": [
@@ -454,7 +444,7 @@ mod tests {
         assert_eq!(expected, tree.to_string(0..20));
 
         tree.expand(1); // no-op
-        tree.collapse(3); // no-op
+        tree.collapse(2); // no-op
         assert_eq!(expected, tree.to_string(0..20));
 
         tree.collapse(3);
@@ -462,6 +452,74 @@ mod tests {
             "hobbies": [
               [ ]
               [ ]
+            ]
+          }
+        "#};
+        assert_eq!(expected, tree.to_string(0..20));
+
+        tree.collapse(1);
+        let expected = indoc! {r#"{
+            "hobbies": [ ]
+          }
+        "#};
+        assert_eq!(expected, tree.to_string(0..20));
+
+        tree.expand(1);
+        let expected = indoc! {r#"{
+            "hobbies": [
+              [ ]
+              [ ]
+            ]
+          }
+        "#};
+        assert_eq!(expected, tree.to_string(0..20));
+
+        tree.expand(2);
+        let expected = indoc! {r#"{
+            "hobbies": [
+              [
+                "reading"
+                "cycling"
+              ]
+              [ ]
+            ]
+          }
+        "#};
+        assert_eq!(expected, tree.to_string(0..20));
+
+        tree.collapse(0);
+        let expected = "{ }\n";
+        assert_eq!(expected, tree.to_string(0..20));
+
+        for i in 1..10 {
+            tree.expand(i); // no-op
+        }
+        assert_eq!(expected, tree.to_string(0..20));
+
+        tree.expand(0);
+        let expected = indoc! {r#"{
+            "hobbies": [
+              [
+                "reading"
+                "cycling"
+              ]
+              [ ]
+            ]
+          }
+        "#};
+        assert_eq!(expected, tree.to_string(0..20));
+
+        tree.expand(6);
+        let expected = indoc! {r#"{
+            "hobbies": [
+              [
+                "reading"
+                "cycling"
+              ]
+              [
+                "swimming"
+                "dancing"
+              ]
             ]
           }
         "#};
