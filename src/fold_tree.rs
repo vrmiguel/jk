@@ -32,6 +32,7 @@ impl<'a> FoldableJsonViewTree<'a> {
         rows
     }
 
+    #[cfg(test)]
     pub fn to_string(&self, range: Range<usize>) -> String {
         let mut string = String::new();
         for row in self.display_rows(range) {

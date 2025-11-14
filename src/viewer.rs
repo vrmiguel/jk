@@ -127,13 +127,19 @@ fn draw(frame: &mut Frame, ctx: &Ctx) {
     let start = ctx.scroll_offset;
     let end = start + ctx.viewport_height;
 
-    let display_rows = ctx.tree.display_rows(start..end);
+    let display_rows = ctx.tree.display_rows(
+        // One more than we'll actually render, so we can check the next row for whether we should add a comma or not
+        start..end + 1,
+    );
 
     let mut lines: Vec<Line> = Vec::new();
 
-    for (i, display_row) in display_rows.iter().enumerate() {
+    for (i, display_row) in display_rows.iter().take(ctx.viewport_height).enumerate() {
         let actual_line_index = start + i;
-        let mut line_spans = render_display_row(display_row);
+        let next_row = display_rows.get(i + 1);
+        let needs_comma = should_add_comma(display_row, next_row);
+
+        let mut line_spans = render_display_row(display_row, needs_comma);
 
         if actual_line_index == ctx.cursor {
             line_spans.insert(
@@ -145,6 +151,7 @@ fn draw(frame: &mut Frame, ctx: &Ctx) {
                         .add_modifier(Modifier::BOLD),
                 ),
             );
+
             line_spans = line_spans
                 .into_iter()
                 .map(|span| Span::styled(span.content, span.style.bg(Color::DarkGray)))
@@ -165,7 +172,11 @@ fn draw(frame: &mut Frame, ctx: &Ctx) {
     frame.render_widget(paragraph, frame.area());
 }
 
-fn render_display_row(row: &DisplayRow) -> Vec<Span<'static>> {
+fn should_add_comma(current: &DisplayRow, next: Option<&DisplayRow>) -> bool {
+    next.map_or(false, |n| n.depth == current.depth)
+}
+
+fn render_display_row(row: &DisplayRow, needs_comma: bool) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
     let indent = "  ".repeat(row.depth);
@@ -229,6 +240,10 @@ fn render_display_row(row: &DisplayRow) -> Vec<Span<'static>> {
                 }
             }
         }
+    }
+
+    if needs_comma {
+        spans.push(Span::styled(",", Style::default().fg(Color::Gray)));
     }
 
     spans
