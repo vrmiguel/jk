@@ -121,10 +121,11 @@ impl<'a> Node<'a> {
                 && let NodeKind::NonCollapsible {
                     lines: last_node_lines,
                 } = &mut last.kind
+                && let NodeKind::NonCollapsible { lines: new_lines } = node.kind
             {
                 last.length += node.length;
-                last.original_range.end += 1;
-                last_node_lines.push(JsonLine { key, value });
+                last.original_range.end = node.original_range.end;
+                last_node_lines.extend(new_lines);
             } else {
                 values.push(node);
             }

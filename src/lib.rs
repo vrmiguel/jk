@@ -4,10 +4,10 @@ mod borrowed_value;
 pub mod flatten;
 /// A JSON formatter
 pub mod fmt;
-/// Reverts `jk flatten` to its original form
-pub mod unflatten;
 /// Foldable tree structure for efficient JSON viewing
 pub mod fold_tree;
+/// Reverts `jk flatten` to its original form
+pub mod unflatten;
 
 pub use borrowed_value::{Value, ValueEvents};
 pub use flatten::flatten;
