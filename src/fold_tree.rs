@@ -1,0 +1,470 @@
+#![allow(dead_code)]
+
+use std::{
+    fmt::{self, Write as _},
+    mem,
+    ops::Range,
+};
+
+use serde_json::Value;
+
+type JsonMap = serde_json::Map<String, Value>;
+
+#[derive(Debug, Clone, Copy)]
+pub struct JsonLine<'a> {
+    key: Option<&'a str>,
+    value: &'a Value,
+}
+
+#[derive(Debug)]
+pub struct FoldableJsonViewTree<'a> {
+    root: Node<'a>,
+}
+
+impl<'a> FoldableJsonViewTree<'a> {
+    pub fn new(value: &'a Value) -> Self {
+        FoldableJsonViewTree {
+            root: Node::new(None, value, 0),
+        }
+    }
+
+    pub fn display_rows(&self, range: Range<usize>) -> Vec<DisplayRow<'a>> {
+        let mut rows = Vec::new();
+        self.root.display_rows(0, range, &mut rows, 0);
+        rows
+    }
+
+    pub fn to_string(&self, range: Range<usize>) -> String {
+        let mut string = String::new();
+        for row in self.display_rows(range) {
+            let _ = write!(string, "{row}");
+        }
+        string
+    }
+
+    pub fn collapse(&mut self, index: usize) {
+        self.root
+            .update_is_collapsed(index, CollapseCommand::Collapse);
+    }
+
+    pub fn expand(&mut self, index: usize) {
+        self.root
+            .update_is_collapsed(index, CollapseCommand::Expand);
+    }
+
+    pub fn toggle(&mut self, index: usize) {
+        self.root
+            .update_is_collapsed(index, CollapseCommand::Toggle);
+    }
+}
+
+/// A node in this tree can represent multiple lines, check [`NodeKind`].
+#[derive(Debug, Clone)]
+pub struct Node<'a> {
+    length: usize,
+    original_range: Range<usize>,
+    kind: NodeKind<'a>,
+}
+
+impl<'a> Node<'a> {
+    fn new(key: Option<&'a str>, value: &'a Value, line_offset: usize) -> Self {
+        let collapsable_node = match value {
+            Value::Array(array) => {
+                let iter = array.iter().map(|v| (None, v));
+                Some(Self::new_from_contents(iter, line_offset + 1))
+            }
+            Value::Object(object) => {
+                let iter = object.iter().map(|(k, v)| (Some(k.as_str()), v));
+                Some(Self::new_from_contents(iter, line_offset + 1))
+            }
+            _ => None,
+        };
+
+        match collapsable_node {
+            Some(inner_contents) => {
+                let contents_size = inner_contents.as_ref().map_or(0, |node| node.length);
+                let original_range = line_offset..line_offset + contents_size + 2; // add 2 for the opening and closing lines
+                Self {
+                    length: original_range.len(),
+                    original_range,
+                    kind: NodeKind::Collapsable {
+                        is_collapsed: false,
+                        nested_contents: inner_contents.map(Box::new),
+                        line: JsonLine { key, value },
+                    },
+                }
+            }
+            None => Self {
+                length: 1,
+                original_range: line_offset..line_offset + 1,
+                kind: NodeKind::NonCollapsable {
+                    lines: Vec::from([JsonLine { key, value }]),
+                },
+            },
+        }
+    }
+
+    fn new_from_contents<I>(values_iter: I, offset: usize) -> Option<Self>
+    where
+        I: Iterator<Item = (Option<&'a str>, &'a Value)> + 'a,
+    {
+        let mut values_iter = values_iter.peekable();
+        values_iter.peek()?; // early return
+
+        let mut values = Vec::<Self>::new();
+        let mut next_element_offset = offset;
+
+        while let Some((key, value)) = values_iter.next() {
+            let node = Node::new(key, value, next_element_offset);
+            next_element_offset += node.length;
+
+            // merge any two consecutive NonCollapsable regions
+            if let Some(last) = values.last_mut()
+                && let NodeKind::NonCollapsable {
+                    lines: last_node_lines,
+                } = &mut last.kind
+            {
+                last.length += node.length;
+                last.original_range.end += 1;
+                last_node_lines.push(JsonLine { key, value });
+            } else {
+                values.push(node);
+            }
+        }
+
+        node_array_into_tree(values)
+    }
+
+    fn update_is_collapsed(
+        &mut self,
+        target_remaining_offset: usize,
+        command: CollapseCommand,
+    ) -> Option<CollapseLineDiff> {
+        let collapse_line_diff = match &mut self.kind {
+            NodeKind::NonCollapsable { .. } => None,
+            NodeKind::Collapsable {
+                is_collapsed,
+                nested_contents: contents,
+                ..
+            } => {
+                // Check if current node is the target one
+                if target_remaining_offset == 0 {
+                    let save_length = self.length;
+
+                    self.length = match (command, *is_collapsed) {
+                        (CollapseCommand::Collapse, _) | (CollapseCommand::Toggle, false) => {
+                            *is_collapsed = true;
+                            1
+                        }
+                        (CollapseCommand::Expand, _) | (CollapseCommand::Toggle, true) => {
+                            *is_collapsed = false;
+                            self.original_range.len()
+                        }
+                    };
+
+                    // return early here to skip the step below this match
+                    return Some(CollapseLineDiff(
+                        self.length as isize - save_length as isize,
+                    ));
+                } else if let Some(contents) = contents {
+                    // Call recursively to next node till we find the target
+                    //
+                    // Arithmetic Safety:
+                    //   We just checked that offset > 0
+                    //
+                    // Hopefully this is tail-call optimized and doesn't overflow the process stack for JSONs with a lot of nestedness
+                    contents.update_is_collapsed(target_remaining_offset - 1, command) // pass the call recursively to its children, '-1' cause we moving down
+                } else {
+                    None
+                }
+            }
+            NodeKind::SubTree { left, right } => {
+                if target_remaining_offset <= left.length {
+                    left.update_is_collapsed(target_remaining_offset, command)
+                } else if target_remaining_offset <= left.length + right.length {
+                    right.update_is_collapsed(left.length + target_remaining_offset, command)
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(CollapseLineDiff(diff)) = collapse_line_diff {
+            self.length = (self.length as isize + diff as isize) as usize;
+        }
+
+        collapse_line_diff
+    }
+
+    fn display_rows(
+        &self,
+        current_offset: usize,
+        range: Range<usize>,
+        rows: &mut Vec<DisplayRow<'a>>,
+        depth: usize,
+    ) {
+        if current_offset >= range.end {
+            return;
+        }
+
+        match &self.kind {
+            NodeKind::NonCollapsable {
+                lines: json_references,
+            } => {
+                for (i, &line) in json_references.iter().enumerate() {
+                    if range.contains(&(current_offset + i)) {
+                        rows.push(DisplayRow {
+                            depth,
+                            kind: DisplayRowKind::Element {
+                                line,
+                                is_collapsed: false,
+                            },
+                        });
+                    }
+                }
+            }
+            NodeKind::Collapsable {
+                line,
+                is_collapsed,
+                nested_contents: contents,
+            } => {
+                if range.contains(&current_offset) {
+                    rows.push(DisplayRow {
+                        depth,
+                        kind: DisplayRowKind::Element {
+                            line: *line,
+                            is_collapsed: *is_collapsed,
+                        },
+                    });
+                }
+
+                if !is_collapsed {
+                    if let Some(contents) = contents {
+                        contents.display_rows(current_offset + 1, range, rows, depth + 1);
+                    }
+                    rows.push(DisplayRow {
+                        depth,
+                        kind: DisplayRowKind::ClosingSymbol {
+                            symbol: closing_symbol_of_collapsable_element(line.value),
+                        },
+                    });
+                }
+            }
+            NodeKind::SubTree { left, right } => {
+                left.display_rows(current_offset, range.clone(), rows, depth);
+                right.display_rows(current_offset + left.length, range, rows, depth);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum NodeKind<'a> {
+    /// One or multiple lines of non-collapsable json elements.
+    NonCollapsable { lines: Vec<JsonLine<'a>> },
+    /// A single collapsable element (array or object) and it's contents.
+    Collapsable {
+        line: JsonLine<'a>,
+        is_collapsed: bool,
+        nested_contents: Option<Box<Node<'a>>>,
+    },
+    /// A sequence of nodes that can be searched in logarithmic time.
+    ///
+    /// Can only appear as the `contents` field of a NodeKind::Collapsable.
+    SubTree {
+        left: Box<Node<'a>>,
+        right: Box<Node<'a>>,
+    },
+}
+
+impl NodeKind<'_> {
+    pub fn is_collapsable(&self) -> bool {
+        matches!(self, NodeKind::Collapsable { .. })
+    }
+
+    pub fn is_path(&self) -> bool {
+        matches!(self, NodeKind::SubTree { .. })
+    }
+
+    pub fn is_non_collapsable(&self) -> bool {
+        matches!(self, NodeKind::NonCollapsable { .. })
+    }
+}
+
+#[derive(Debug)]
+pub struct DisplayRow<'a> {
+    pub depth: usize,
+    pub kind: DisplayRowKind<'a>,
+}
+
+#[derive(Debug)]
+pub enum DisplayRowKind<'a> {
+    Element {
+        line: JsonLine<'a>,
+        is_collapsed: bool,
+    },
+    ClosingSymbol {
+        symbol: char,
+    },
+}
+
+impl fmt::Display for DisplayRow<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        '_lol_: {
+            let indent = self.depth * 2;
+            const INDENT: &str = unsafe { <str>::from_utf8_unchecked(&[b' '; 64]) };
+
+            let full = indent / INDENT.len();
+            let rem = indent % INDENT.len();
+
+            for _ in 0..full {
+                write!(f, "{INDENT}")?;
+            }
+            if rem != 0 {
+                write!(f, "{}", &INDENT[..rem])?;
+            }
+        }
+
+        match &self.kind {
+            DisplayRowKind::ClosingSymbol { symbol } => {
+                writeln!(f, "{symbol}")?;
+            }
+            DisplayRowKind::Element { line, is_collapsed } => {
+                if let Some(key) = line.key {
+                    write!(f, "\"{}\": ", key)?;
+                }
+
+                match line.value {
+                    Value::Null => writeln!(f, "null")?,
+                    Value::Bool(boo) => writeln!(f, "{boo}")?,
+                    Value::Number(number) => writeln!(f, "{number}")?,
+                    Value::String(string) => writeln!(f, "\"{string}\"")?,
+                    Value::Array(_) => {
+                        writeln!(f, "[{}", if *is_collapsed { " ]" } else { "" })?;
+                    }
+                    Value::Object(_) => {
+                        writeln!(f, "{{{}", if *is_collapsed { " }" } else { "" })?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn node_array_into_tree(mut nodes: Vec<Node>) -> Option<Node> {
+    assert!(!nodes.is_empty());
+
+    while nodes.len() > 1 {
+        let taken = mem::take(&mut nodes);
+        nodes = Vec::new();
+
+        for chunk in taken.chunks(2) {
+            match chunk {
+                [left, right] => {
+                    let original_range = left.original_range.start..right.original_range.end;
+                    nodes.push(Node {
+                        length: original_range.len(),
+                        original_range,
+                        kind: NodeKind::SubTree {
+                            left: Box::new(left.clone()),
+                            right: Box::new(right.clone()),
+                        },
+                    });
+                }
+                [last] => {
+                    nodes.push(last.clone());
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    nodes.pop()
+}
+
+fn closing_symbol_of_collapsable_element(value: &Value) -> char {
+    match value {
+        Value::Array(_) => ']',
+        Value::Object(_) => '}',
+        _ => unreachable!(),
+    }
+}
+
+enum CollapseCommand {
+    Collapse,
+    Expand,
+    Toggle,
+}
+
+/// How many lines changed after collapsing or expanding a node.
+///
+/// Positive indicates that length has increased, and negative indicates that it decreased.
+struct CollapseLineDiff(isize);
+
+#[cfg(test)]
+mod tests {
+    use indoc::indoc;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn test_fold_tree() {
+        let json = json!({
+            "hobbies": [
+                [
+                    "reading",
+                    "cycling"
+                ],
+                [
+                    "swimming",
+                    "dancing"
+                ]
+            ]
+        });
+
+        let mut tree = FoldableJsonViewTree::new(&json);
+
+        tree.collapse(0);
+        let expected = "{ }\n";
+        assert_eq!(expected, tree.to_string(0..20));
+
+        tree.expand(0);
+        tree.collapse(1);
+        let expected = indoc! {r#"{
+              "hobbies": [ ]
+            }
+        "#};
+        assert_eq!(expected, tree.to_string(0..20));
+
+        tree.expand(1);
+        tree.collapse(2);
+        let expected = indoc! {r#"{
+            "hobbies": [
+              [ ]
+              [
+                "swimming"
+                "dancing"
+              ]
+            ]
+          }
+        "#};
+        assert_eq!(expected, tree.to_string(0..20));
+
+        tree.expand(1); // no-op
+        tree.collapse(3); // no-op
+        assert_eq!(expected, tree.to_string(0..20));
+
+        tree.collapse(3);
+        let expected = indoc! {r#"{
+            "hobbies": [
+              [ ]
+              [ ]
+            ]
+          }
+        "#};
+        assert_eq!(expected, tree.to_string(0..20));
+    }
+}

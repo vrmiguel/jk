@@ -14,6 +14,8 @@ use crate::{
 
 /// A version of serde_json::Value that tracks which parts of it are collapsed/expanded
 mod node;
+// daora?
+mod fold_tree;
 mod source;
 mod utils;
 /// The interactive TUI JSON viewer
