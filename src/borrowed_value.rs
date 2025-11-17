@@ -388,15 +388,13 @@ json.hobbies[1][1] = "dancing";"#;
         let json = r#"{"a": {"b": {"c": {"d": "deep"}}}}"#;
         let value = parse_value(json).unwrap();
 
-        if let Value::Object(a) = value {
-            if let Some(Value::Object(b)) = a.get("a") {
-                if let Some(Value::Object(c)) = b.get("b") {
-                    if let Some(Value::Object(d)) = c.get("c") {
-                        assert!(matches!(d.get("d"), Some(Value::String("deep"))));
-                        return;
-                    }
-                }
-            }
+        if let Value::Object(a) = value
+            && let Some(Value::Object(b)) = a.get("a")
+            && let Some(Value::Object(c)) = b.get("b")
+            && let Some(Value::Object(d)) = c.get("c")
+        {
+            assert!(matches!(d.get("d"), Some(Value::String("deep"))));
+            return;
         }
         panic!("failed to traverse nested structure");
     }
