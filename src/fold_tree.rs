@@ -209,8 +209,8 @@ impl<'a> Node<'a> {
 
         match &self.kind {
             NodeKind::NonCollapsible { lines } => {
-                let start_idx = range.start.saturating_sub(current_offset);
                 let end_idx = range.end.saturating_sub(current_offset).min(lines.len());
+                let start_idx = range.start.saturating_sub(current_offset).min(end_idx);
 
                 // Iterate through the intersection of NonCollapsible lines with the target range
                 for &line in &lines[start_idx..end_idx] {
