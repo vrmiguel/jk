@@ -4,32 +4,17 @@ use std::{
 };
 
 use jsax::Parser;
-use lexopt::Arg;
 
 use crate::{
-    source::Source,
-    utils::{is_stdin_readable, should_use_colors},
+    cli::{Command, CommandParseResult, Language},
+    utils::should_use_colors,
 };
 
+mod cli;
 mod source;
 mod utils;
 /// The interactive TUI JSON viewer
 mod viewer;
-
-#[derive(Debug)]
-enum Command {
-    View,
-    Flatten,
-    Unflatten,
-    Fmt,
-    Schema(Language),
-    Help,
-}
-
-#[derive(Debug)]
-enum Language {
-    TypeScript,
-}
 
 fn main() -> ExitCode {
     if let Err(err) = run() {
@@ -41,76 +26,13 @@ fn main() -> ExitCode {
 }
 
 fn run() -> anyhow::Result<()> {
-    let piped_input = is_stdin_readable();
-    let mut parser = lexopt::Parser::from_env();
-
-    let mut command = None;
-    let mut path = None;
-
-    // TODO: if `piped_input`, conflict if `path` is provided? just ignore the piped input?
-    while let Some(arg) = parser.next()? {
-        match arg {
-            Arg::Value(value) if value == "flatten" && command.is_none() => {
-                command = Some(Command::Flatten);
-            }
-            Arg::Value(value) if value == "unflatten" && command.is_none() => {
-                command = Some(Command::Unflatten);
-            }
-            Arg::Value(value) if value == "fmt" && command.is_none() => {
-                command = Some(Command::Fmt);
-            }
-            Arg::Value(value) if value == "schema" && command.is_none() => {
-                // Next argument should be the format (typescript, rust, etc.)
-                let format_arg = parser.value()?;
-                let format_str = format_arg.to_str().ok_or_else(|| {
-                    anyhow::anyhow!("Invalid format specified for schema command")
-                })?;
-
-                let format = match format_str {
-                    "typescript" | "ts" => Language::TypeScript,
-                    _ => {
-                        return Err(anyhow::anyhow!(
-                            "Unknown schema format '{}'. Supported: typescript, ts",
-                            format_str
-                        ));
-                    }
-                };
-
-                command = Some(Command::Schema(format));
-            }
-            Arg::Value(value) if value == "help" && command.is_none() => {
-                command = Some(Command::Help);
-            }
-            Arg::Value(value) if path.is_none() => {
-                path = Some(value);
-            }
-            _ => return Err(arg.unexpected().into()),
-        }
-    }
-
-    // This is a bit unsightly, but the idea is to allow the `path` argument to not be required if the input is piped.
-    // Also, if no specific command is provided, the default is to view the JSON interactively
-    let (command, source) = match (command, path) {
-        (Some(Command::Help), _) => {
+    let (command, source) = match cli::parse_command()? {
+        CommandParseResult::Help => {
             help_message();
             return Ok(());
         }
-        (None, None) if !piped_input => {
-            help_message();
-            return Ok(());
-        }
-        (Some(command), Some(path)) => (command, Source::File(path.into())),
-        (None, Some(path)) => (Command::View, Source::File(path.into())),
-        (Some(command), None) if !piped_input => {
-            return Err(lexopt::Error::MissingValue {
-                option: Some(format!("{:?}", command)),
-            }
-            .into());
-        }
-        (Some(command), None) => (command, Source::Stdin),
-        (None, None) => (Command::View, Source::Stdin),
+        CommandParseResult::Command(command, source) => (command, source),
     };
-
     match command {
         Command::View => {
             let source = source.load()?;
