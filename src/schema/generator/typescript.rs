@@ -4,6 +4,8 @@
 // that we need to handle the fact that different languages deal with `Union`s differently.
 //   in_reply_to_user_id_str: (string | null);
 
+use std::borrow::Cow;
+
 use heck::AsPascalCase;
 use indexmap::IndexMap;
 use singularize::singularize;
@@ -172,20 +174,19 @@ pub fn generate_with_name(schema: &SchemaType, root_name: &str) -> String {
     let collected = collect_types(schema, root_name);
 
     // If there are any duplicates in the types collected, merge them
-    let mut types: IndexMap<String, SchemaType> = IndexMap::new();
+    let mut types: IndexMap<String, Cow<'_, SchemaType>> = IndexMap::new();
     for (name, schema_ref) in collected {
         match types.shift_remove(&name) {
             Some(existing) => {
-                let merged = existing.merge(schema_ref.clone());
-                types.insert(name, merged);
+                let merged = ((*existing).clone()).merge(schema_ref.clone());
+                types.insert(name, Cow::Owned(merged));
             }
             None => {
-                types.insert(name, schema_ref.clone());
+                types.insert(name, Cow::Borrowed(schema_ref));
             }
         }
     }
 
-    // Phase 3: Generate TypeScript code
     let mut result: Vec<String> = types
         .iter()
         .rev() // Nested types first
