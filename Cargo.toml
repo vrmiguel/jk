@@ -20,6 +20,8 @@ jsax = { path = "crates/jsax" }
 memmap2 = "0.9.9"
 logos = "0.15.1"
 itoa = "1.0.15"
+heck = "0.5.0"
+singularize = "0.1.0"
 
 [[bench]]
 name = "formatter_comparison"

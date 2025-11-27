@@ -22,7 +22,13 @@ enum Command {
     Flatten,
     Unflatten,
     Fmt,
+    Schema(Language),
     Help,
+}
+
+#[derive(Debug)]
+enum Language {
+    TypeScript,
 }
 
 fn main() -> ExitCode {
@@ -52,6 +58,25 @@ fn run() -> anyhow::Result<()> {
             }
             Arg::Value(value) if value == "fmt" && command.is_none() => {
                 command = Some(Command::Fmt);
+            }
+            Arg::Value(value) if value == "schema" && command.is_none() => {
+                // Next argument should be the format (typescript, rust, etc.)
+                let format_arg = parser.value()?;
+                let format_str = format_arg.to_str().ok_or_else(|| {
+                    anyhow::anyhow!("Invalid format specified for schema command")
+                })?;
+
+                let format = match format_str {
+                    "typescript" | "ts" => Language::TypeScript,
+                    _ => {
+                        return Err(anyhow::anyhow!(
+                            "Unknown schema format '{}'. Supported: typescript, ts",
+                            format_str
+                        ));
+                    }
+                };
+
+                command = Some(Command::Schema(format));
             }
             Arg::Value(value) if value == "help" && command.is_none() => {
                 command = Some(Command::Help);
@@ -122,6 +147,16 @@ fn run() -> anyhow::Result<()> {
             }
             writer.flush()?;
         }
+        Command::Schema(format) => {
+            let source = source.load()?;
+            let schema = jk::schema::infer::infer_schema(source.as_str()?)?;
+
+            let output = match format {
+                Language::TypeScript => jk::schema::generator::typescript::generate(&schema),
+            };
+
+            println!("{}", output);
+        }
         Command::Help => {
             unreachable!()
         }
@@ -131,6 +166,20 @@ fn run() -> anyhow::Result<()> {
 }
 
 fn help_message() {
-    // TODO: flesh this out
     println!("Usage: jk [command] [path]");
+    println!();
+    println!("Commands:");
+    println!("  [none]               Open JSON in interactive viewer (default)");
+    println!("  flatten              Flatten JSON to dot-notation format");
+    println!("  unflatten            Convert flattened format back to JSON");
+    println!("  fmt                  Format/pretty-print JSON");
+    println!("  schema <format>      Generate types from JSON schema");
+    println!("                       Formats: typescript (ts)");
+    println!("  help                 Show this help message");
+    println!();
+    println!("Examples:");
+    println!("  jk data.json                    # Open in viewer");
+    println!("  jk flatten data.json            # Flatten JSON");
+    println!("  jk schema typescript data.json  # Generate TypeScript types");
+    println!("  cat data.json | jk fmt          # Format JSON from stdin");
 }
