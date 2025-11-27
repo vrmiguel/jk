@@ -4,6 +4,12 @@ use std::{
 };
 
 use jsax::Parser;
+use syntect::{
+    easy::HighlightLines,
+    highlighting::{Style, ThemeSet},
+    parsing::SyntaxSet,
+    util::{LinesWithEndings, as_24_bit_terminal_escaped},
+};
 
 use crate::{
     cli::{Command, CommandParseResult, Language},
@@ -77,12 +83,42 @@ fn run() -> anyhow::Result<()> {
                 Language::TypeScript => jk::schema::generator::typescript::generate(&schema),
             };
 
-            println!("{}", output);
+            if should_use_colors() {
+                print_highlighted(&output, format)?;
+            } else {
+                println!("{}", output);
+            }
         }
         Command::Help => {
             unreachable!()
         }
     }
+
+    Ok(())
+}
+
+// TODO(vrmiguel): this is probably terrible, gotta figure out how to use syntect better
+fn print_highlighted(code: &str, language: Language) -> anyhow::Result<()> {
+    let ps = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+
+    let syntax = match language {
+        Language::TypeScript => ps
+            .find_syntax_by_extension("js")
+            .unwrap_or_else(|| ps.find_syntax_plain_text()),
+    };
+
+    let mut h = HighlightLines::new(syntax, &ts.themes["base16-ocean.dark"]);
+
+    for line in LinesWithEndings::from(code) {
+        let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ps)?;
+        let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
+        print!("{}", escaped);
+    }
+
+    // Reset colors
+    print!("\x1b[0m");
+    println!();
 
     Ok(())
 }

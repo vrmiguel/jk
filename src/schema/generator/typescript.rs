@@ -2,6 +2,7 @@
 // TODO: it's very possible that this code can be generalized to generate
 // muiltiple languages, through some sort of trait. What's a complicating factor here is
 // that we need to handle the fact that different languages deal with `Union`s differently.
+//   in_reply_to_user_id_str: (string | null);
 
 use heck::AsPascalCase;
 use indexmap::IndexMap;
