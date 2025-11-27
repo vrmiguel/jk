@@ -57,51 +57,54 @@ fn get_target_type_name(
     }
 }
 
-/// Collects all "inner" objects that need to become their own types
-fn collect_types<'a>(
-    schema: &'a SchemaType,
-    parent_type_name: &str,
-    field_name: Option<&str>,
-    types: &mut IndexMap<String, &'a SchemaType>,
-) {
-    match schema {
-        SchemaType::Object(fields) => {
-            let current_type_name = if let Some(fname) = field_name {
-                let name = get_target_type_name(parent_type_name, Some(fname), false);
-                if !types.contains_key(&name) {
-                    types.insert(name.clone(), schema);
+/// Collects all "inner" objects that need to become their own types.
+/// Allows duplicates - merging happens later in `generate_with_name`.
+fn collect_types<'a>(schema: &'a SchemaType, root_name: &str) -> Vec<(String, &'a SchemaType)> {
+    fn collect_types_rec<'a>(
+        schema: &'a SchemaType,
+        parent_type_name: &str,
+        field_name: Option<&str>,
+        types: &mut Vec<(String, &'a SchemaType)>,
+    ) {
+        match schema {
+            SchemaType::Object(fields) => {
+                let current_type_name = if let Some(fname) = field_name {
+                    let name = get_target_type_name(parent_type_name, Some(fname), false);
+                    types.push((name.clone(), schema));
+                    name
+                } else {
+                    // Root object - not added to types list
+                    parent_type_name.to_string()
+                };
+
+                for (fname, field_schema) in fields {
+                    collect_types_rec(&field_schema.type_, &current_type_name, Some(fname), types);
                 }
-                name
-            } else {
-                // If we're here, the current type is the root object, and not added to `types`
-                parent_type_name.to_string()
-            };
-
-            for (fname, field_schema) in fields {
-                collect_types(&field_schema.type_, &current_type_name, Some(fname), types);
             }
-        }
-        SchemaType::Array(inner) => {
-            if let SchemaType::Object(obj_fields) = &**inner {
-                let item_name = get_target_type_name(parent_type_name, field_name, true);
+            SchemaType::Array(inner) => {
+                if let SchemaType::Object(obj_fields) = &**inner {
+                    let item_name = get_target_type_name(parent_type_name, field_name, true);
+                    types.push((item_name.clone(), inner));
 
-                if !types.contains_key(&item_name) {
-                    types.insert(item_name.clone(), inner);
                     for (fname, field_schema) in obj_fields {
-                        collect_types(&field_schema.type_, &item_name, Some(fname), types);
+                        collect_types_rec(&field_schema.type_, &item_name, Some(fname), types);
                     }
+                } else {
+                    collect_types_rec(inner, parent_type_name, field_name, types);
                 }
-            } else {
-                collect_types(inner, parent_type_name, field_name, types);
             }
-        }
-        SchemaType::Union(variants) => {
-            for variant in variants {
-                collect_types(variant, parent_type_name, field_name, types);
+            SchemaType::Union(variants) => {
+                for variant in variants {
+                    collect_types_rec(variant, parent_type_name, field_name, types);
+                }
             }
+            _ => {}
         }
-        _ => {}
     }
+
+    let mut collected = Vec::new();
+    collect_types_rec(schema, root_name, None, &mut collected);
+    collected
 }
 
 /// How do we write the given type in TypeScript?
@@ -166,14 +169,26 @@ pub fn generate(schema: &SchemaType) -> String {
 }
 
 pub fn generate_with_name(schema: &SchemaType, root_name: &str) -> String {
-    let mut types = IndexMap::new();
+    let collected = collect_types(schema, root_name);
 
-    collect_types(schema, root_name, None, &mut types);
+    // If there are any duplicates in the types collected, merge them
+    let mut types: IndexMap<String, SchemaType> = IndexMap::new();
+    for (name, schema_ref) in collected {
+        match types.shift_remove(&name) {
+            Some(existing) => {
+                let merged = existing.merge(schema_ref.clone());
+                types.insert(name, merged);
+            }
+            None => {
+                types.insert(name, schema_ref.clone());
+            }
+        }
+    }
 
+    // Phase 3: Generate TypeScript code
     let mut result: Vec<String> = types
         .iter()
-        // Rev to display nested types first
-        .rev()
+        .rev() // Nested types first
         .map(|(name, schema)| generate_single_type(name, schema))
         .collect();
 
@@ -514,6 +529,50 @@ mod tests {
               name: string;
             };"#
         };
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_merge_same_field_name_different_structures() {
+        use crate::schema::infer::infer_schema;
+
+        let json = r#"{
+            "a": {
+                "credit_card": {
+                    "number": 5502
+                }
+            },
+            "b": {
+                "credit_card": {
+                    "number": 5503,
+                    "owes": true
+                }
+            }
+        }"#;
+
+        let schema = infer_schema(json).unwrap();
+        let result = generate(&schema);
+
+        let expected = indoc! {r#"
+            export type CreditCard = {
+              number: number;
+              owes?: boolean;
+            };
+
+            export type B = {
+              credit_card: CreditCard;
+            };
+
+            export type A = {
+              credit_card: CreditCard;
+            };
+
+            export type Root = {
+              a: A;
+              b: B;
+            };"#
+        };
+
         assert_eq!(result, expected);
     }
 }

@@ -568,4 +568,86 @@ mod tests {
         infer_schema(twitter_json).unwrap();
         // Some way of asserting the gigantic resulting schema. So far, this test only really asserts that twitter.json doesn't cause it to panic :v
     }
+
+    #[test]
+    fn test_same_field_name_different_structure() {
+        let json = r#"{
+            "a": {
+                "credit_card": {
+                    "number": 5502
+                }
+            },
+            "b": {
+                "credit_card": {
+                    "number": 5503,
+                    "owes": true
+                }
+            }
+        }"#;
+
+        let schema = infer_schema(json).unwrap();
+
+        let mut a_credit_card_fields = BTreeMap::new();
+        a_credit_card_fields.insert(
+            "number".to_string(),
+            FieldSchema {
+                type_: SchemaType::Number,
+                required: true,
+            },
+        );
+
+        let mut a_fields = BTreeMap::new();
+        a_fields.insert(
+            "credit_card".to_string(),
+            FieldSchema {
+                type_: SchemaType::Object(a_credit_card_fields),
+                required: true,
+            },
+        );
+
+        let mut b_credit_card_fields = BTreeMap::new();
+        b_credit_card_fields.insert(
+            "number".to_string(),
+            FieldSchema {
+                type_: SchemaType::Number,
+                required: true,
+            },
+        );
+        b_credit_card_fields.insert(
+            "owes".to_string(),
+            FieldSchema {
+                type_: SchemaType::Boolean,
+                required: true,
+            },
+        );
+
+        let mut b_fields = BTreeMap::new();
+        b_fields.insert(
+            "credit_card".to_string(),
+            FieldSchema {
+                type_: SchemaType::Object(b_credit_card_fields),
+                required: true,
+            },
+        );
+
+        let mut root_fields = BTreeMap::new();
+        root_fields.insert(
+            "a".to_string(),
+            FieldSchema {
+                type_: SchemaType::Object(a_fields),
+                required: true,
+            },
+        );
+        root_fields.insert(
+            "b".to_string(),
+            FieldSchema {
+                type_: SchemaType::Object(b_fields),
+                required: true,
+            },
+        );
+
+        let expected = SchemaType::Object(root_fields);
+
+        assert_eq!(schema, expected);
+    }
 }
