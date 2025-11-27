@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Parse a JSON and infer its corresponding schema
-pub mod infer;
 /// Given a schema, generate types that would deserialize it
 pub mod generator;
+/// Parse a JSON and infer its corresponding schema
+pub mod infer;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SchemaType {

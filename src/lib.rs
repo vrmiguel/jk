@@ -6,11 +6,11 @@ pub mod flatten;
 pub mod fmt;
 /// A foldable (sum-)tree
 pub mod fold_tree;
-/// Reverts `jk flatten` to its original form
-pub mod unflatten;
 /// Code for inferring a schema from JSON, and generating types to deserialize
 /// it in different languages
 pub mod schema;
+/// Reverts `jk flatten` to its original form
+pub mod unflatten;
 
 pub use borrowed_value::{Value, ValueEvents, parse_value};
 pub use flatten::flatten;

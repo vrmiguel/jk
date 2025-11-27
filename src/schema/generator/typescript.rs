@@ -10,70 +10,6 @@ use singularize::singularize;
 
 use crate::schema::SchemaType;
 
-// ts reserved keywords
-const RESERVED: &[&str] = &[
-    "break",
-    "case",
-    "catch",
-    "class",
-    "const",
-    "continue",
-    "debugger",
-    "default",
-    "delete",
-    "do",
-    "else",
-    "enum",
-    "export",
-    "extends",
-    "false",
-    "finally",
-    "for",
-    "function",
-    "if",
-    "import",
-    "in",
-    "instanceof",
-    "new",
-    "null",
-    "return",
-    "super",
-    "switch",
-    "this",
-    "throw",
-    "true",
-    "try",
-    "typeof",
-    "var",
-    "void",
-    "while",
-    "with",
-    "as",
-    "implements",
-    "interface",
-    "let",
-    "package",
-    "private",
-    "protected",
-    "public",
-    "static",
-    "yield",
-    "any",
-    "boolean",
-    "constructor",
-    "declare",
-    "get",
-    "module",
-    "require",
-    "number",
-    "set",
-    "string",
-    "symbol",
-    "type",
-    "from",
-    "of",
-];
-
 fn sanitize_field_name(name: &str) -> String {
     if name.is_empty() {
         return "\"\"".to_string();
@@ -81,12 +17,12 @@ fn sanitize_field_name(name: &str) -> String {
 
     let mut chars = name.chars();
     let first = chars.next().unwrap();
-    let is_valid_start = first.is_alphabetic() || first == '_';
-    let is_valid_rest = chars.all(|c| c.is_alphanumeric() || c == '_');
+    let is_valid_start = first.is_alphabetic() || first == '_' || first == '$';
+    let is_valid_rest = chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
 
     let is_valid_identifier = is_valid_start && is_valid_rest;
 
-    if is_valid_identifier && !RESERVED.contains(&name) {
+    if is_valid_identifier {
         name.to_string()
     } else {
         format!("\"{}\"", name)
@@ -267,8 +203,15 @@ mod tests {
         assert_eq!(sanitize_field_name("name"), "name");
         assert_eq!(sanitize_field_name("user_id"), "user_id");
         assert_eq!(sanitize_field_name("_private"), "_private");
-        assert_eq!(sanitize_field_name("class"), "\"class\"");
-        assert_eq!(sanitize_field_name("for"), "\"for\"");
+        assert_eq!(sanitize_field_name("$jquery"), "$jquery");
+
+        // keywords are valid as property names in TS
+        assert_eq!(sanitize_field_name("class"), "class");
+        assert_eq!(sanitize_field_name("for"), "for");
+        assert_eq!(sanitize_field_name("type"), "type");
+        assert_eq!(sanitize_field_name("instanceof"), "instanceof");
+
+        // Need quotes
         assert_eq!(sanitize_field_name("first-name"), "\"first-name\"");
         assert_eq!(sanitize_field_name("my field"), "\"my field\"");
         assert_eq!(sanitize_field_name("123abc"), "\"123abc\"");
@@ -450,10 +393,11 @@ mod tests {
         let schema = infer_schema(json).unwrap();
 
         let result = generate(&schema);
+
         let expected = indoc! {r#"
             export type Root = {
-              "class": string;
-              "for": number;
+              class: string;
+              for: number;
             };"#
         };
         assert_eq!(result, expected);

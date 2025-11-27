@@ -565,7 +565,7 @@ mod tests {
     #[test]
     fn infer_for_twitter_json() {
         let twitter_json = include_str!("../../samples/twitter.json");
-        infer_schema(twitter_json).unwrap(); 
+        infer_schema(twitter_json).unwrap();
         // Some way of asserting the gigantic resulting schema. So far, this test only really asserts that twitter.json doesn't cause it to panic :v
     }
 }
