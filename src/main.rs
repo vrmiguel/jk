@@ -81,6 +81,7 @@ fn run() -> anyhow::Result<()> {
 
             let output = match format {
                 Language::TypeScript => jk::schema::generator::typescript::generate(&schema),
+                Language::Rust => jk::schema::generator::rust::generate(&schema),
             };
 
             if should_use_colors() {
@@ -105,6 +106,9 @@ fn print_highlighted(code: &str, language: Language) -> anyhow::Result<()> {
     let syntax = match language {
         Language::TypeScript => ps
             .find_syntax_by_extension("js")
+            .unwrap_or_else(|| ps.find_syntax_plain_text()),
+        Language::Rust => ps
+            .find_syntax_by_extension("rs")
             .unwrap_or_else(|| ps.find_syntax_plain_text()),
     };
 
@@ -132,12 +136,13 @@ fn help_message() {
     println!("  unflatten            Convert flattened format back to JSON");
     println!("  fmt                  Format/pretty-print JSON");
     println!("  schema <format>      Generate types from JSON schema");
-    println!("                       Formats: typescript (ts)");
+    println!("                       Formats: typescript (ts), rust (rs)");
     println!("  help                 Show this help message");
     println!();
     println!("Examples:");
     println!("  jk data.json                    # Open in viewer");
     println!("  jk flatten data.json            # Flatten JSON");
     println!("  jk schema typescript data.json  # Generate TypeScript types");
+    println!("  jk schema rust data.json        # Generate Rust types");
     println!("  cat data.json | jk fmt          # Format JSON from stdin");
 }

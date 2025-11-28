@@ -80,6 +80,14 @@ impl Language for TypeScript {
     fn type_alias_declaration(&self, name: &str, type_ref: &str) -> String {
         format!("export type {} = {};", name, type_ref)
     }
+
+    fn union_type_declaration(
+        &self,
+        _name: &str,
+        _variants: &std::collections::BTreeSet<crate::schema::SchemaType>,
+    ) -> String {
+        panic!("TypeScript can inline unions, union_type_declaration should not be called")
+    }
 }
 
 pub fn generate(schema: &SchemaType) -> String {

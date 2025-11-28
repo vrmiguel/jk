@@ -16,6 +16,7 @@ pub enum Command {
 #[derive(Debug)]
 pub enum Language {
     TypeScript,
+    Rust,
 }
 
 pub enum CommandParseResult {
@@ -58,9 +59,10 @@ fn parse_command_pure(
 
                 let format = match format_str {
                     "typescript" | "ts" => Language::TypeScript,
+                    "rust" | "rs" => Language::Rust,
                     _ => {
                         return Err(anyhow::anyhow!(
-                            "Unknown schema format '{}'. Supported: typescript, ts",
+                            "Unknown schema format '{}'. Supported: typescript, ts, rust, rs",
                             format_str
                         ));
                     }
@@ -224,6 +226,43 @@ mod tests {
     }
 
     #[test]
+    fn test_schema_file_rs() {
+        let parser = lexopt::Parser::from_args(&["schema", "rs", "data.json"]);
+        let result = parse_command_pure(false, parser).unwrap();
+
+        match result {
+            CommandParseResult::Command(Command::Schema(Language::Rust), Source::File(path)) => {
+                assert_eq!(path, PathBuf::from("data.json"));
+            }
+            _ => panic!("Expected Schema Rust command with file source"),
+        }
+    }
+
+    #[test]
+    fn test_schema_file_rust() {
+        let parser = lexopt::Parser::from_args(&["schema", "rust", "data.json"]);
+        let result = parse_command_pure(false, parser).unwrap();
+
+        match result {
+            CommandParseResult::Command(Command::Schema(Language::Rust), Source::File(path)) => {
+                assert_eq!(path, PathBuf::from("data.json"));
+            }
+            _ => panic!("Expected Schema Rust command with file source"),
+        }
+    }
+
+    #[test]
+    fn test_schema_stdin_rs() {
+        let parser = lexopt::Parser::from_args(&["schema", "rs"]);
+        let result = parse_command_pure(true, parser).unwrap();
+
+        match result {
+            CommandParseResult::Command(Command::Schema(Language::Rust), Source::Stdin) => {}
+            _ => panic!("Expected Schema Rust command with stdin source"),
+        }
+    }
+
+    #[test]
     fn test_view_file() {
         let parser = lexopt::Parser::from_args(&["data.json"]);
         let result = parse_command_pure(false, parser).unwrap();
@@ -279,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_schema_unknown_format() {
-        let parser = lexopt::Parser::from_args(&["schema", "rust", "data.json"]);
+        let parser = lexopt::Parser::from_args(&["schema", "python", "data.json"]);
         let result = parse_command_pure(false, parser);
 
         assert!(result.is_err());

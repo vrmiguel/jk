@@ -37,6 +37,10 @@ pub trait Language {
 
     /// Generate a type alias declaration
     fn type_alias_declaration(&self, name: &str, type_ref: &str) -> String;
+
+    /// Generate a union type declaration (for languages that can't inline unions)
+    /// Only called when can_inline_unions() returns false
+    fn union_type_declaration(&self, name: &str, variants: &BTreeSet<SchemaType>) -> String;
 }
 
 /// What should we call this inner type?
@@ -183,6 +187,9 @@ pub fn generate_type_ref<L: Language>(
 fn generate_single_type<L: Language>(name: &str, schema: &SchemaType, lang: &L) -> String {
     match schema {
         SchemaType::Object(fields) => lang.object_type_declaration(name, fields),
+        SchemaType::Union(variants) if !lang.can_inline_unions() => {
+            lang.union_type_declaration(name, variants)
+        }
         _ => {
             let type_ref = generate_type_ref(schema, name, None, lang);
             lang.type_alias_declaration(name, &type_ref)
