@@ -1,168 +1,84 @@
-// TODO: needs some sort of structural equality checking
-// TODO: it's very possible that this code can be generalized to generate
-// muiltiple languages, through some sort of trait. What's a complicating factor here is
-// that we need to handle the fact that different languages deal with `Union`s differently.
-//   in_reply_to_user_id_str: (string | null);
-
-use std::borrow::Cow;
-
-use heck::AsPascalCase;
-use indexmap::IndexMap;
-use singularize::singularize;
+use std::collections::BTreeSet;
 
 use crate::schema::SchemaType;
+use crate::schema::generator::{Language, generate_with_language};
 
-fn sanitize_field_name(name: &str) -> String {
-    if name.is_empty() {
-        return "\"\"".to_string();
+pub struct TypeScript;
+
+impl Language for TypeScript {
+    fn can_inline_unions(&self) -> bool {
+        true
     }
 
-    let mut chars = name.chars();
-    let first = chars.next().unwrap();
-    let is_valid_start = first.is_alphabetic() || first == '_' || first == '$';
-    let is_valid_rest = chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
-
-    let is_valid_identifier = is_valid_start && is_valid_rest;
-
-    if is_valid_identifier {
-        name.to_string()
-    } else {
-        format!("\"{}\"", name)
+    fn name_union(&self, _parent_type_name: &str, _variants: &BTreeSet<SchemaType>) -> String {
+        panic!("TypeScript can inline unions, name_union should not be called")
     }
-}
 
-/// What should we call this inner type?
-///
-/// - parent_name is the name of the parent type
-/// - field_name is the inferred name of the field that this type is the value o
-/// - is_array_item is true if this type is the value of an array item
-///
-/// Examples:
-/// - {"users": [{...}]} -> parent_name="Root", field_name="users", is_array_item=true -> "User"
-/// - {"user": {...}} -> "User"
-/// - [{...}] -> "RootItem"
-/// - {...} -> "Root"
-fn get_target_type_name(
-    parent_name: &str,
-    field_name: Option<&str>,
-    is_array_item: bool,
-) -> String {
-    match (field_name, is_array_item) {
-        // Array of objects with a field name: {"users": [{...}]} -> "User"
-        (Some(fname), true) => AsPascalCase(&singularize(fname)).to_string(),
-        // Nested object field: {"user": {...}} -> "User"
-        (Some(fname), false) => AsPascalCase(fname).to_string(),
-        // Root-level array of objects: [{...}] -> "RootItem"
-        (None, true) => format!("{}Item", parent_name),
-        // Root-level object
-        (None, false) => parent_name.to_string(),
+    fn sanitize_field_name(&self, name: &str) -> String {
+        if name.is_empty() {
+            return "\"\"".to_string();
+        }
+
+        let mut chars = name.chars();
+        let first = chars.next().unwrap();
+        let is_valid_start = first.is_alphabetic() || first == '_' || first == '$';
+        let is_valid_rest = chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+
+        let is_valid_identifier = is_valid_start && is_valid_rest;
+
+        if is_valid_identifier {
+            name.to_string()
+        } else {
+            format!("\"{}\"", name)
+        }
     }
-}
 
-/// Collects all "inner" objects that need to become their own types.
-/// Allows duplicates - merging happens later in `generate_with_name`.
-fn collect_types<'a>(schema: &'a SchemaType, root_name: &str) -> Vec<(String, &'a SchemaType)> {
-    fn collect_types_rec<'a>(
-        schema: &'a SchemaType,
-        parent_type_name: &str,
-        field_name: Option<&str>,
-        types: &mut Vec<(String, &'a SchemaType)>,
-    ) {
+    fn primitive_type(&self, schema: &SchemaType) -> Option<&str> {
         match schema {
-            SchemaType::Object(fields) => {
-                let current_type_name = if let Some(fname) = field_name {
-                    let name = get_target_type_name(parent_type_name, Some(fname), false);
-                    types.push((name.clone(), schema));
-                    name
-                } else {
-                    // Root object - not added to types list
-                    parent_type_name.to_string()
-                };
-
-                for (fname, field_schema) in fields {
-                    collect_types_rec(&field_schema.type_, &current_type_name, Some(fname), types);
-                }
-            }
-            SchemaType::Array(inner) => {
-                if let SchemaType::Object(obj_fields) = &**inner {
-                    let item_name = get_target_type_name(parent_type_name, field_name, true);
-                    types.push((item_name.clone(), inner));
-
-                    for (fname, field_schema) in obj_fields {
-                        collect_types_rec(&field_schema.type_, &item_name, Some(fname), types);
-                    }
-                } else {
-                    collect_types_rec(inner, parent_type_name, field_name, types);
-                }
-            }
-            SchemaType::Union(variants) => {
-                for variant in variants {
-                    collect_types_rec(variant, parent_type_name, field_name, types);
-                }
-            }
-            _ => {}
+            SchemaType::String => Some("string"),
+            SchemaType::Number => Some("number"),
+            SchemaType::Boolean => Some("boolean"),
+            SchemaType::Null => Some("null"),
+            SchemaType::Unknown => Some("unknown"),
+            _ => None,
         }
     }
 
-    let mut collected = Vec::new();
-    collect_types_rec(schema, root_name, None, &mut collected);
-    collected
-}
-
-/// How do we write the given type in TypeScript?
-fn generate_type_ref(
-    schema: &SchemaType,
-    parent_type_name: &str,
-    field_name: Option<&str>,
-) -> String {
-    match schema {
-        SchemaType::String => "string".to_string(),
-        SchemaType::Number => "number".to_string(),
-        SchemaType::Boolean => "boolean".to_string(),
-        SchemaType::Null => "null".to_string(),
-        SchemaType::Unknown => "unknown".to_string(),
-        SchemaType::Object(_) => get_target_type_name(parent_type_name, field_name, false),
-        SchemaType::Array(inner) => match &**inner {
-            SchemaType::Object(_) => {
-                let item_name = get_target_type_name(parent_type_name, field_name, true);
-                format!("{}[]", item_name)
-            }
-            _ => format!(
-                "{}[]",
-                generate_type_ref(inner, parent_type_name, field_name)
-            ),
-        },
-        SchemaType::Union(variants) => {
-            let type_refs: Vec<String> = variants
-                .iter()
-                .map(|v| generate_type_ref(v, parent_type_name, field_name))
-                .collect();
-            format!("({})", type_refs.join(" | "))
-        }
+    fn array_type(&self, inner: &str) -> String {
+        format!("{}[]", inner)
     }
-}
 
-fn generate_single_type(name: &str, schema: &SchemaType) -> String {
-    match schema {
-        SchemaType::Object(fields) => {
-            if fields.is_empty() {
-                return format!("export type {} = {{}};", name);
-            }
+    fn union_type(&self, variants: &[String]) -> String {
+        format!("({})", variants.join(" | "))
+    }
 
-            let mut field_defs = Vec::new();
-            for (field_name, field_schema) in fields {
-                let sanitized_name = sanitize_field_name(field_name);
-                let optional = if field_schema.required { "" } else { "?" };
-                let type_ref = generate_type_ref(&field_schema.type_, name, Some(field_name));
-                field_defs.push(format!("  {}{}: {};", sanitized_name, optional, type_ref));
-            }
-
-            format!("export type {} = {{\n{}\n}};", name, field_defs.join("\n"))
+    fn object_type_declaration(
+        &self,
+        name: &str,
+        fields: &std::collections::BTreeMap<String, crate::schema::FieldSchema>,
+    ) -> String {
+        if fields.is_empty() {
+            return format!("export type {} = {{}};", name);
         }
-        _ => {
-            let type_ref = generate_type_ref(schema, name, None);
-            format!("export type {} = {};", name, type_ref)
+
+        let mut field_defs = Vec::new();
+        for (field_name, field_schema) in fields {
+            let sanitized_name = self.sanitize_field_name(field_name);
+            let optional = if field_schema.required { "" } else { "?" };
+            let type_ref = crate::schema::generator::generate_type_ref(
+                &field_schema.type_,
+                name,
+                Some(field_name),
+                self,
+            );
+            field_defs.push(format!("  {}{}: {};", sanitized_name, optional, type_ref));
         }
+
+        format!("export type {} = {{\n{}\n}};", name, field_defs.join("\n"))
+    }
+
+    fn type_alias_declaration(&self, name: &str, type_ref: &str) -> String {
+        format!("export type {} = {};", name, type_ref)
     }
 }
 
@@ -171,35 +87,12 @@ pub fn generate(schema: &SchemaType) -> String {
 }
 
 pub fn generate_with_name(schema: &SchemaType, root_name: &str) -> String {
-    let collected = collect_types(schema, root_name);
-
-    // If there are any duplicates in the types collected, merge them
-    let mut types: IndexMap<String, Cow<'_, SchemaType>> = IndexMap::new();
-    for (name, schema_ref) in collected {
-        match types.shift_remove(&name) {
-            Some(existing) => {
-                let merged = ((*existing).clone()).merge(schema_ref.clone());
-                types.insert(name, Cow::Owned(merged));
-            }
-            None => {
-                types.insert(name, Cow::Borrowed(schema_ref));
-            }
-        }
-    }
-
-    let mut result: Vec<String> = types
-        .iter()
-        .rev() // Nested types first
-        .map(|(name, schema)| generate_single_type(name, schema))
-        .collect();
-
-    result.push(generate_single_type(root_name, schema));
-
-    result.join("\n\n")
+    generate_with_language(schema, root_name, &TypeScript)
 }
 
 #[cfg(test)]
 mod tests {
+    use heck::AsPascalCase;
     use indoc::indoc;
 
     use super::*;
@@ -216,23 +109,24 @@ mod tests {
 
     #[test]
     fn test_sanitize() {
-        assert_eq!(sanitize_field_name("name"), "name");
-        assert_eq!(sanitize_field_name("user_id"), "user_id");
-        assert_eq!(sanitize_field_name("_private"), "_private");
-        assert_eq!(sanitize_field_name("$jquery"), "$jquery");
+        let ts = TypeScript;
+        assert_eq!(ts.sanitize_field_name("name"), "name");
+        assert_eq!(ts.sanitize_field_name("user_id"), "user_id");
+        assert_eq!(ts.sanitize_field_name("_private"), "_private");
+        assert_eq!(ts.sanitize_field_name("$jquery"), "$jquery");
 
         // keywords are valid as property names in TS
-        assert_eq!(sanitize_field_name("class"), "class");
-        assert_eq!(sanitize_field_name("for"), "for");
-        assert_eq!(sanitize_field_name("type"), "type");
-        assert_eq!(sanitize_field_name("instanceof"), "instanceof");
+        assert_eq!(ts.sanitize_field_name("class"), "class");
+        assert_eq!(ts.sanitize_field_name("for"), "for");
+        assert_eq!(ts.sanitize_field_name("type"), "type");
+        assert_eq!(ts.sanitize_field_name("instanceof"), "instanceof");
 
         // Need quotes
-        assert_eq!(sanitize_field_name("first-name"), "\"first-name\"");
-        assert_eq!(sanitize_field_name("my field"), "\"my field\"");
-        assert_eq!(sanitize_field_name("123abc"), "\"123abc\"");
-        assert_eq!(sanitize_field_name("5g"), "\"5g\"");
-        assert_eq!(sanitize_field_name(""), "\"\"");
+        assert_eq!(ts.sanitize_field_name("first-name"), "\"first-name\"");
+        assert_eq!(ts.sanitize_field_name("my field"), "\"my field\"");
+        assert_eq!(ts.sanitize_field_name("123abc"), "\"123abc\"");
+        assert_eq!(ts.sanitize_field_name("5g"), "\"5g\"");
+        assert_eq!(ts.sanitize_field_name(""), "\"\"");
     }
 
     #[test]
