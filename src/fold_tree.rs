@@ -240,14 +240,18 @@ impl<'a> Node<'a> {
 
                 if !is_collapsed {
                     if let Some(contents) = contents {
-                        contents.display_rows(current_offset + 1, range, rows, depth + 1);
+                        contents.display_rows(current_offset + 1, range.clone(), rows, depth + 1);
                     }
-                    rows.push(DisplayRow {
-                        depth,
-                        kind: DisplayRowKind::ClosingSymbol {
-                            symbol: closing_symbol_of_collapsable_element(line.value),
-                        },
-                    });
+                    // Add the closing brace/bracket if it's in the current viewport's range
+                    let closing_offset = current_offset + self.length - 1;
+                    if range.contains(&closing_offset) {
+                        rows.push(DisplayRow {
+                            depth,
+                            kind: DisplayRowKind::ClosingSymbol {
+                                symbol: closing_symbol_of_collapsable_element(line.value),
+                            },
+                        });
+                    }
                 }
             }
             NodeKind::SubTree { left, right } => {
