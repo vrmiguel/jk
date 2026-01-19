@@ -53,7 +53,7 @@ impl<'a> Ctx<'a> {
     }
 
     fn total_lines(&self) -> usize {
-        self.tree.display_rows(0..usize::MAX).len()
+        self.tree.root_length()
     }
 
     fn toggle_current(&mut self) {
