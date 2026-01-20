@@ -10,25 +10,29 @@ use ratatui::{
 };
 
 pub fn start_viewer(json: &Value) -> anyhow::Result<()> {
-    let mut ctx = Ctx::new(json);
+    let instant = std::time::Instant::now();
+    let ctx = Ctx::new(json);
+    eprintln!("elapsed for ctx: {:?}", instant.elapsed());
 
-    let mut terminal = ratatui::init();
-    loop {
-        terminal
-            .draw(|frame| {
-                let viewport_height = viewport_height(frame.area());
-                ctx.viewport_height = viewport_height;
-                draw(frame, &ctx);
-            })
-            .expect("failed to draw frame");
+    std::hint::black_box(ctx);
 
-        if let Event::Key(key) = event::read().expect("failed to read event")
-            && ctx.handle_key_event(key)
-        {
-            break;
-        }
-    }
-    ratatui::restore();
+    // let mut terminal = ratatui::init();
+    // loop {
+    //     terminal
+    //         .draw(|frame| {
+    //             let viewport_height = viewport_height(frame.area());
+    //             ctx.viewport_height = viewport_height;
+    //             draw(frame, &ctx);
+    //         })
+    //         .expect("failed to draw frame");
+
+    //     if let Event::Key(key) = event::read().expect("failed to read event")
+    //         && ctx.handle_key_event(key)
+    //     {
+    //         break;
+    //     }
+    // }
+    // ratatui::restore();
     Ok(())
 }
 

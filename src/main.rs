@@ -1,6 +1,7 @@
 use std::{
     io::{self, BufWriter, Write},
     process::ExitCode,
+    time::Instant,
 };
 
 use jsax::Parser;
@@ -42,7 +43,11 @@ fn run() -> anyhow::Result<()> {
     match command {
         Command::View => {
             let source = source.load()?;
+
+            let instant = Instant::now();
             let json = jk::borrowed_value::parse_value(source.as_str()?).unwrap();
+            eprintln!("elapsed for parse_value: {:?}", instant.elapsed());
+
             viewer::start_viewer(&json)?;
         }
         Command::Flatten => {
