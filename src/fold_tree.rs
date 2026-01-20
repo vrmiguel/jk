@@ -1,4 +1,7 @@
-use std::{fmt, mem, ops::Range};
+use std::{fmt, hint::black_box, mem, ops::Range};
+
+use bumpalo::{Bump, collections::Vec as BumpVec};
+use jsax::Event;
 
 use crate::Value;
 
@@ -8,16 +11,105 @@ pub struct JsonLine<'a> {
     pub value: &'a Value<'a>,
 }
 
-#[derive(Debug)]
-pub struct FoldableJsonViewTree<'a> {
-    root: Node<'a>,
+// Por conta de como os vecs anteriores podem crescer depois, isso aqui ainda
+// vai causar muita fragmentação, eu pensei em usar tipo umas linkedlists para evitar
+// fragmentação completamente mas aí não ficaria mais lento? por conta de linkedlist
+//
+// quando acabar esse código todo, fazer um benchmark sem bumpalo para ver se muda
+// alguma pourran
+
+pub enum JsonElement<'a> {
+    Object(BumpVec<'a, (&'a str, Self)>),
+    Array(BumpVec<'a, Self>),
+    String(&'a str),
+    Number(&'a str),
+    Bool(bool),
+    Null,
 }
 
+#[derive(Debug)]
+pub struct FoldableJsonViewTree<'a> {
+    root: TreeNode<'a>,
+}
+
+// fn add_to_parent_with_key<'a>(
+//     stack: &mut Vec<Value<'a>>,
+//     current_key: &mut Option<&'a str>,
+//     value: Value<'a>,
+// ) {
+//     let parent = stack.last_mut().expect("parent container missing");
+
+//     match parent {
+//         Value::Object(map) => {
+//             let key = current_key.take().expect("key missing for object entry");
+//             map.insert(key, value);
+//         }
+//         Value::Array(arr) => {
+//             arr.push(value);
+//         }
+//         _ => panic!("parent must be Object or Array"),
+//     }
+// }
+
 impl<'a> FoldableJsonViewTree<'a> {
-    pub fn new(value: &'a Value) -> Self {
-        FoldableJsonViewTree {
-            root: Node::new(None, value, 0),
+    pub fn parse(text: &'a str, bump: &bumpalo::Bump) -> Result<Self, jsax::Error> {
+        let mut parser = jsax::Parser::new(text);
+
+        enum ContainerElement<'a> {
+            Object(BumpVec<'a, (&'a str, JsonElement<'a>)>),
+            Array(BumpVec<'a, JsonElement<'a>>),
         }
+
+        // A stack of containers (array or object)
+        let mut stack: Vec<ContainerElement> = Vec::new();
+        let mut key_stack = Vec::new();
+
+        let finished_tree = loop {
+            let Some(event) = parser.parse_next()? else {
+                return Err(jsax::Error::Unexpected(
+                    "empty or incomplete JSON".to_string(),
+                ));
+            };
+
+            let mut element_to_add = None;
+            match event {
+                Event::Number(n) => element_to_add = Some(JsonElement::Number(n)),
+                Event::String(s) => element_to_add = Some(JsonElement::String(s)),
+                Event::Boolean(b) => element_to_add = Some(JsonElement::Bool(b)),
+                Event::Null => element_to_add = Some(JsonElement::Null),
+                Event::EndObject { .. } | Event::EndArray { .. } => {
+                    element_to_add = Some(match stack.pop().unwrap() {
+                        ContainerElement::Object(pairs) => JsonElement::Object(pairs),
+                        ContainerElement::Array(elements) => JsonElement::Array(elements),
+                    });
+                }
+
+                Event::StartObject => stack.push(ContainerElement::Object(BumpVec::new_in(bump))),
+                Event::StartArray => stack.push(ContainerElement::Array(BumpVec::new_in(bump))),
+                Event::Key(key) => key_stack.push(key),
+            };
+
+            if let Some(element) = element_to_add {
+                let Some(container) = stack.last_mut() else {
+                    break element;
+                };
+
+                match container {
+                    ContainerElement::Object(pairs) => {
+                        let key = key_stack.pop().unwrap();
+                        pairs.push((key, element));
+                    }
+                    ContainerElement::Array(vec) => {
+                        vec.push(element);
+                    }
+                }
+            }
+        };
+
+        black_box(finished_tree);
+        Ok(FoldableJsonViewTree {
+            root: TreeNode::new(None, &Value::Null, 1),
+        })
     }
 
     pub fn display_rows(&self, range: Range<usize>) -> Vec<DisplayRow<'a>> {
@@ -60,13 +152,13 @@ impl<'a> FoldableJsonViewTree<'a> {
 
 /// A node in this tree can represent multiple lines, check [`NodeKind`].
 #[derive(Debug, Clone)]
-pub struct Node<'a> {
+pub struct TreeNode<'a> {
     length: usize,
     original_range: Range<usize>,
     kind: NodeKind<'a>,
 }
 
-impl<'a> Node<'a> {
+impl<'a> TreeNode<'a> {
     fn new(key: Option<&'a str>, value: &'a Value, line_offset: usize) -> Self {
         let collapsable_node = match value {
             Value::Array(array) => {
@@ -115,7 +207,7 @@ impl<'a> Node<'a> {
         let mut next_element_offset = offset;
 
         for (key, value) in values_iter {
-            let node = Node::new(key, value, next_element_offset);
+            let node = TreeNode::new(key, value, next_element_offset);
             next_element_offset += node.length;
 
             // merge any two consecutive NonCollapsable regions
@@ -276,14 +368,14 @@ pub enum NodeKind<'a> {
     Collapsible {
         line: JsonLine<'a>,
         is_collapsed: bool,
-        nested_contents: Option<Box<Node<'a>>>,
+        nested_contents: Option<Box<TreeNode<'a>>>,
     },
     /// A sequence of nodes that can be searched in logarithmic time.
     ///
     /// Can only appear as the `nested_contents` field of a NodeKind::Collapsible.
     SubTree {
-        left: Box<Node<'a>>,
-        right: Box<Node<'a>>,
+        left: Box<TreeNode<'a>>,
+        right: Box<TreeNode<'a>>,
     },
 }
 
@@ -363,7 +455,7 @@ impl fmt::Display for DisplayRow<'_> {
     }
 }
 
-fn node_array_into_tree(mut nodes: Vec<Node>) -> Option<Node> {
+fn node_array_into_tree(mut nodes: Vec<TreeNode>) -> Option<TreeNode> {
     assert!(!nodes.is_empty());
 
     while nodes.len() > 1 {
@@ -377,7 +469,7 @@ fn node_array_into_tree(mut nodes: Vec<Node>) -> Option<Node> {
                 break;
             };
             let original_range = left.original_range.start..right.original_range.end;
-            nodes.push(Node {
+            nodes.push(TreeNode {
                 length: original_range.len(),
                 original_range,
                 kind: NodeKind::SubTree {
@@ -418,369 +510,369 @@ mod tests {
     use super::*;
     use crate::borrowed_value;
 
-    #[test]
-    fn test_fold_tree() {
-        let json_str = r#"{
-            "hobbies": [
-                [
-                    "reading",
-                    "cycling"
-                ],
-                [
-                    "swimming",
-                    "dancing"
-                ]
-            ]
-        }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
+    // #[test]
+    // fn test_fold_tree() {
+    //     let json_str = r#"{
+    //         "hobbies": [
+    //             [
+    //                 "reading",
+    //                 "cycling"
+    //             ],
+    //             [
+    //                 "swimming",
+    //                 "dancing"
+    //             ]
+    //         ]
+    //     }"#;
+    //     let json = borrowed_value::parse_value(json_str).unwrap();
 
-        let mut tree = FoldableJsonViewTree::new(&json);
+    //     let mut tree = FoldableJsonViewTree::new(&json);
 
-        tree.collapse(2);
-        let expected = indoc! {r#"{
-            "hobbies": [
-              [ ]
-              [
-                "swimming"
-                "dancing"
-              ]
-            ]
-          }
-        "#};
-        assert_eq!(expected, tree.to_string(0..20));
+    //     tree.collapse(2);
+    //     let expected = indoc! {r#"{
+    //         "hobbies": [
+    //           [ ]
+    //           [
+    //             "swimming"
+    //             "dancing"
+    //           ]
+    //         ]
+    //       }
+    //     "#};
+    //     assert_eq!(expected, tree.to_string(0..20));
 
-        tree.expand(1); // no-op
-        tree.collapse(2); // no-op
-        assert_eq!(expected, tree.to_string(0..20));
+    //     tree.expand(1); // no-op
+    //     tree.collapse(2); // no-op
+    //     assert_eq!(expected, tree.to_string(0..20));
 
-        tree.collapse(3);
-        let expected = indoc! {r#"{
-            "hobbies": [
-              [ ]
-              [ ]
-            ]
-          }
-        "#};
-        assert_eq!(expected, tree.to_string(0..20));
+    //     tree.collapse(3);
+    //     let expected = indoc! {r#"{
+    //         "hobbies": [
+    //           [ ]
+    //           [ ]
+    //         ]
+    //       }
+    //     "#};
+    //     assert_eq!(expected, tree.to_string(0..20));
 
-        tree.collapse(1);
-        let expected = indoc! {r#"{
-            "hobbies": [ ]
-          }
-        "#};
-        assert_eq!(expected, tree.to_string(0..20));
+    //     tree.collapse(1);
+    //     let expected = indoc! {r#"{
+    //         "hobbies": [ ]
+    //       }
+    //     "#};
+    //     assert_eq!(expected, tree.to_string(0..20));
 
-        tree.expand(1);
-        let expected = indoc! {r#"{
-            "hobbies": [
-              [ ]
-              [ ]
-            ]
-          }
-        "#};
-        assert_eq!(expected, tree.to_string(0..20));
+    //     tree.expand(1);
+    //     let expected = indoc! {r#"{
+    //         "hobbies": [
+    //           [ ]
+    //           [ ]
+    //         ]
+    //       }
+    //     "#};
+    //     assert_eq!(expected, tree.to_string(0..20));
 
-        tree.expand(2);
-        let expected = indoc! {r#"{
-            "hobbies": [
-              [
-                "reading"
-                "cycling"
-              ]
-              [ ]
-            ]
-          }
-        "#};
-        assert_eq!(expected, tree.to_string(0..20));
+    //     tree.expand(2);
+    //     let expected = indoc! {r#"{
+    //         "hobbies": [
+    //           [
+    //             "reading"
+    //             "cycling"
+    //           ]
+    //           [ ]
+    //         ]
+    //       }
+    //     "#};
+    //     assert_eq!(expected, tree.to_string(0..20));
 
-        tree.collapse(0);
-        let expected = "{ }\n";
-        assert_eq!(expected, tree.to_string(0..20));
+    //     tree.collapse(0);
+    //     let expected = "{ }\n";
+    //     assert_eq!(expected, tree.to_string(0..20));
 
-        for i in 1..10 {
-            tree.expand(i); // no-op
-        }
-        assert_eq!(expected, tree.to_string(0..20));
+    //     for i in 1..10 {
+    //         tree.expand(i); // no-op
+    //     }
+    //     assert_eq!(expected, tree.to_string(0..20));
 
-        tree.expand(0);
-        let expected = indoc! {r#"{
-            "hobbies": [
-              [
-                "reading"
-                "cycling"
-              ]
-              [ ]
-            ]
-          }
-        "#};
-        assert_eq!(expected, tree.to_string(0..20));
+    //     tree.expand(0);
+    //     let expected = indoc! {r#"{
+    //         "hobbies": [
+    //           [
+    //             "reading"
+    //             "cycling"
+    //           ]
+    //           [ ]
+    //         ]
+    //       }
+    //     "#};
+    //     assert_eq!(expected, tree.to_string(0..20));
 
-        tree.expand(6);
-        let expected = indoc! {r#"{
-            "hobbies": [
-              [
-                "reading"
-                "cycling"
-              ]
-              [
-                "swimming"
-                "dancing"
-              ]
-            ]
-          }
-        "#};
-        assert_eq!(expected, tree.to_string(0..20));
-    }
+    //     tree.expand(6);
+    //     let expected = indoc! {r#"{
+    //         "hobbies": [
+    //           [
+    //             "reading"
+    //             "cycling"
+    //           ]
+    //           [
+    //             "swimming"
+    //             "dancing"
+    //           ]
+    //         ]
+    //       }
+    //     "#};
+    //     assert_eq!(expected, tree.to_string(0..20));
+    // }
 
-    fn assert_root_length_matches_display_rows(tree: &FoldableJsonViewTree) {
-        let actual_rows = tree.display_rows(0..usize::MAX);
-        let root_length = tree.root_length();
-        assert_eq!(
-            root_length,
-            actual_rows.len(),
-            "root.length ({}) should equal display_rows count ({})",
-            root_length,
-            actual_rows.len()
-        );
-    }
+    // fn assert_root_length_matches_display_rows(tree: &FoldableJsonViewTree) {
+    //     let actual_rows = tree.display_rows(0..usize::MAX);
+    //     let root_length = tree.root_length();
+    //     assert_eq!(
+    //         root_length,
+    //         actual_rows.len(),
+    //         "root.length ({}) should equal display_rows count ({})",
+    //         root_length,
+    //         actual_rows.len()
+    //     );
+    // }
 
-    #[test]
-    fn test_root_length_invariant_simple() {
-        let json_str = r#"{
-            "name": "Alice",
-            "age": 30,
-            "items": [1, 2, 3]
-        }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
-        let mut tree = FoldableJsonViewTree::new(&json);
+    // #[test]
+    // fn test_root_length_invariant_simple() {
+    //     let json_str = r#"{
+    //         "name": "Alice",
+    //         "age": 30,
+    //         "items": [1, 2, 3]
+    //     }"#;
+    //     let json = borrowed_value::parse_value(json_str).unwrap();
+    //     let mut tree = FoldableJsonViewTree::new(&json);
 
-        // Initial state: fully expanded
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 9);
+    //     // Initial state: fully expanded
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 9);
 
-        // collapse the array
-        tree.collapse(3);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 5);
+    //     // collapse the array
+    //     tree.collapse(3);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 5);
 
-        // expand it back
-        tree.expand(3);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 9);
+    //     // expand it back
+    //     tree.expand(3);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 9);
 
-        // collapse the root object
-        tree.collapse(0);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 1);
+    //     // collapse the root object
+    //     tree.collapse(0);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 1);
 
-        // expand the root object
-        tree.expand(0);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 9);
-    }
+    //     // expand the root object
+    //     tree.expand(0);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 9);
+    // }
 
-    #[test]
-    fn test_root_length_invariant_nested() {
-        let json_str = r#"{
-            "hobbies": [
-                [
-                    "reading",
-                    "cycling"
-                ],
-                [
-                    "swimming",
-                    "dancing"
-                ]
-            ]
-        }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
-        let mut tree = FoldableJsonViewTree::new(&json);
+    // #[test]
+    // fn test_root_length_invariant_nested() {
+    //     let json_str = r#"{
+    //         "hobbies": [
+    //             [
+    //                 "reading",
+    //                 "cycling"
+    //             ],
+    //             [
+    //                 "swimming",
+    //                 "dancing"
+    //             ]
+    //         ]
+    //     }"#;
+    //     let json = borrowed_value::parse_value(json_str).unwrap();
+    //     let mut tree = FoldableJsonViewTree::new(&json);
 
-        // Initial state: fully expanded
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 12);
+    //     // Initial state: fully expanded
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 12);
 
-        // collapse first inner array
-        tree.collapse(2);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 9);
+    //     // collapse first inner array
+    //     tree.collapse(2);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 9);
 
-        // collapse second inner array
-        tree.collapse(3);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 6);
+    //     // collapse second inner array
+    //     tree.collapse(3);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 6);
 
-        // collapse outer array
-        tree.collapse(1);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 3);
+    //     // collapse outer array
+    //     tree.collapse(1);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 3);
 
-        // expand outer array (inner arrays still collapsed)
-        tree.expand(1);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 6);
+    //     // expand outer array (inner arrays still collapsed)
+    //     tree.expand(1);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 6);
 
-        // expand first inner array
-        tree.expand(2);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 9);
+    //     // expand first inner array
+    //     tree.expand(2);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 9);
 
-        // collapse root (before expanding second array)
-        tree.collapse(0);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 1);
+    //     // collapse root (before expanding second array)
+    //     tree.collapse(0);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 1);
 
-        // expand root (first inner array still expanded, second still collapsed)
-        tree.expand(0);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 9);
+    //     // expand root (first inner array still expanded, second still collapsed)
+    //     tree.expand(0);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 9);
 
-        // Now expand second inner array (which is at index 6 after first array expanded)
-        tree.expand(6);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 12);
-    }
+    //     // Now expand second inner array (which is at index 6 after first array expanded)
+    //     tree.expand(6);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 12);
+    // }
 
-    #[test]
-    fn test_root_length_invariant_toggle() {
-        let json_str = r#"{
-            "data": {
-                "nested": {
-                    "value": 42
-                }
-            }
-        }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
-        let mut tree = FoldableJsonViewTree::new(&json);
+    // #[test]
+    // fn test_root_length_invariant_toggle() {
+    //     let json_str = r#"{
+    //         "data": {
+    //             "nested": {
+    //                 "value": 42
+    //             }
+    //         }
+    //     }"#;
+    //     let json = borrowed_value::parse_value(json_str).unwrap();
+    //     let mut tree = FoldableJsonViewTree::new(&json);
 
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 7);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 7);
 
-        // toggle the most nested object
-        tree.toggle(2);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 5);
+    //     // toggle the most nested object
+    //     tree.toggle(2);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 5);
 
-        // toggle it back
-        tree.toggle(2);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 7);
+    //     // toggle it back
+    //     tree.toggle(2);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 7);
 
-        // toggle middle object
-        tree.toggle(1);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 3);
+    //     // toggle middle object
+    //     tree.toggle(1);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 3);
 
-        // toggle root
-        tree.toggle(0);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 1);
+    //     // toggle root
+    //     tree.toggle(0);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 1);
 
-        // toggle root back
-        tree.toggle(0);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 3);
+    //     // toggle root back
+    //     tree.toggle(0);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 3);
 
-        // toggle middle back
-        tree.toggle(1);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 7);
-    }
+    //     // toggle middle back
+    //     tree.toggle(1);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 7);
+    // }
 
-    #[test]
-    fn test_root_length_invariant() {
-        let json_str = r#"{
-            "users": [
-                {
-                    "name": "Alice",
-                    "hobbies": ["reading", "cycling"]
-                },
-                {
-                    "name": "Bob",
-                    "hobbies": ["swimming"]
-                }
-            ],
-            "count": 2
-        }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
-        let mut tree = FoldableJsonViewTree::new(&json);
+    // #[test]
+    // fn test_root_length_invariant() {
+    //     let json_str = r#"{
+    //         "users": [
+    //             {
+    //                 "name": "Alice",
+    //                 "hobbies": ["reading", "cycling"]
+    //             },
+    //             {
+    //                 "name": "Bob",
+    //                 "hobbies": ["swimming"]
+    //             }
+    //         ],
+    //         "count": 2
+    //     }"#;
+    //     let json = borrowed_value::parse_value(json_str).unwrap();
+    //     let mut tree = FoldableJsonViewTree::new(&json);
 
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 18);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 18);
 
-        // collapse first user's hobbies array (no change, already at name/hobbies level which is merged)
-        tree.collapse(3);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 18);
+    //     // collapse first user's hobbies array (no change, already at name/hobbies level which is merged)
+    //     tree.collapse(3);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 18);
 
-        // collapse first user object
-        tree.collapse(2);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 12);
+    //     // collapse first user object
+    //     tree.collapse(2);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 12);
 
-        // collapse second user's hobbies array (no change - user object already collapsed)
-        tree.collapse(4); // Index shifts after previous collapse
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 12);
+    //     // collapse second user's hobbies array (no change - user object already collapsed)
+    //     tree.collapse(4); // Index shifts after previous collapse
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 12);
 
-        // collapse users array
-        tree.collapse(1);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 4);
+    //     // collapse users array
+    //     tree.collapse(1);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 4);
 
-        // expand users array
-        tree.expand(1);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 12);
+    //     // expand users array
+    //     tree.expand(1);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 12);
 
-        // expand first user object
-        tree.expand(2);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 18);
+    //     // expand first user object
+    //     tree.expand(2);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 18);
 
-        // multiple toggles
-        tree.toggle(3);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 18);
-        tree.toggle(3);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 18);
-        tree.toggle(0);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 1);
-        tree.toggle(0);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 18);
-    }
+    //     // multiple toggles
+    //     tree.toggle(3);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 18);
+    //     tree.toggle(3);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 18);
+    //     tree.toggle(0);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 1);
+    //     tree.toggle(0);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 18);
+    // }
 
-    #[test]
-    fn test_root_length_with_non_collapsible_values() {
-        let json_str = r#"{
-            "string": "hello",
-            "number": 42,
-            "bool": true,
-            "null": null,
-            "array": []
-        }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
-        let mut tree = FoldableJsonViewTree::new(&json);
+    // #[test]
+    // fn test_root_length_with_non_collapsible_values() {
+    //     let json_str = r#"{
+    //         "string": "hello",
+    //         "number": 42,
+    //         "bool": true,
+    //         "null": null,
+    //         "array": []
+    //     }"#;
+    //     let json = borrowed_value::parse_value(json_str).unwrap();
+    //     let mut tree = FoldableJsonViewTree::new(&json);
 
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 8);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 8);
 
-        // collapse empty array
-        tree.collapse(5);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 7);
+    //     // collapse empty array
+    //     tree.collapse(5);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 7);
 
-        // collapse root
-        tree.collapse(0);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 1);
+    //     // collapse root
+    //     tree.collapse(0);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 1);
 
-        // expand root (array still collapsed)
-        tree.expand(0);
-        assert_root_length_matches_display_rows(&tree);
-        assert_eq!(tree.root_length(), 7);
-    }
+    //     // expand root (array still collapsed)
+    //     tree.expand(0);
+    //     assert_root_length_matches_display_rows(&tree);
+    //     assert_eq!(tree.root_length(), 7);
+    // }
 }

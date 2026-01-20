@@ -43,12 +43,7 @@ fn run() -> anyhow::Result<()> {
     match command {
         Command::View => {
             let source = source.load()?;
-
-            let instant = Instant::now();
-            let json = jk::borrowed_value::parse_value(source.as_str()?).unwrap();
-            eprintln!("elapsed for parse_value: {:?}", instant.elapsed());
-
-            viewer::start_viewer(&json)?;
+            viewer::start_viewer(source.as_str()?)?;
         }
         Command::Flatten => {
             let source = source.load()?;

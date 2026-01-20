@@ -1,3 +1,6 @@
+use std::hint::black_box;
+
+use bumpalo::Bump;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use jk::Value;
 use jk::fold_tree::{DisplayRow, DisplayRowKind, FoldableJsonViewTree};
@@ -9,9 +12,10 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-pub fn start_viewer(json: &Value) -> anyhow::Result<()> {
+pub fn start_viewer(text: &str) -> anyhow::Result<()> {
     let instant = std::time::Instant::now();
-    let ctx = Ctx::new(json);
+    let bump = Bump::new();
+    let ctx = Ctx::parse(text, &bump);
     eprintln!("elapsed for ctx: {:?}", instant.elapsed());
 
     std::hint::black_box(ctx);
@@ -45,15 +49,15 @@ struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
-    fn new(json: &'a Value) -> Self {
-        let tree = FoldableJsonViewTree::new(json);
+    fn parse(text: &'a str, bump: &bumpalo::Bump) -> Result<Self, jsax::Error> {
+        let tree = FoldableJsonViewTree::parse(text, bump)?;
 
-        Self {
+        Ok(Self {
             tree,
             cursor: 0,
             scroll_offset: 0,
             viewport_height: 0,
-        }
+        })
     }
 
     fn total_lines(&self) -> usize {
