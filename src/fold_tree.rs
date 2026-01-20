@@ -1,4 +1,4 @@
-use std::{fmt, hint::black_box, mem, ops::Range};
+use std::{collections::LinkedList, fmt, hint::black_box, mem, ops::Range, time::Instant};
 
 use bumpalo::{Bump, collections::Vec as BumpVec};
 use jsax::Event;
@@ -19,7 +19,7 @@ pub struct JsonLine<'a> {
 // alguma pourran
 
 pub enum JsonElement<'a> {
-    Object(BumpVec<'a, (&'a str, Self)>),
+    Object(LinkedList<(&'a str, Self), &'a Bump>),
     Array(BumpVec<'a, Self>),
     String(&'a str),
     Number(&'a str),
@@ -53,10 +53,11 @@ pub struct FoldableJsonViewTree<'a> {
 
 impl<'a> FoldableJsonViewTree<'a> {
     pub fn parse(text: &'a str, bump: &bumpalo::Bump) -> Result<Self, jsax::Error> {
+        let start = Instant::now();
         let mut parser = jsax::Parser::new(text);
 
         enum ContainerElement<'a> {
-            Object(BumpVec<'a, (&'a str, JsonElement<'a>)>),
+            Object(LinkedList<(&'a str, JsonElement<'a>), &'a Bump>),
             Array(BumpVec<'a, JsonElement<'a>>),
         }
 
@@ -84,7 +85,9 @@ impl<'a> FoldableJsonViewTree<'a> {
                     });
                 }
 
-                Event::StartObject => stack.push(ContainerElement::Object(BumpVec::new_in(bump))),
+                Event::StartObject => {
+                    stack.push(ContainerElement::Object(LinkedList::new_in(bump)))
+                }
                 Event::StartArray => stack.push(ContainerElement::Array(BumpVec::new_in(bump))),
                 Event::Key(key) => key_stack.push(key),
             };
@@ -97,7 +100,7 @@ impl<'a> FoldableJsonViewTree<'a> {
                 match container {
                     ContainerElement::Object(pairs) => {
                         let key = key_stack.pop().unwrap();
-                        pairs.push((key, element));
+                        pairs.push_back((key, element));
                     }
                     ContainerElement::Array(vec) => {
                         vec.push(element);
@@ -106,7 +109,10 @@ impl<'a> FoldableJsonViewTree<'a> {
             }
         };
 
+        dbg!((start.elapsed()));
         black_box(finished_tree);
+        dbg!((start.elapsed()));
+
         Ok(FoldableJsonViewTree {
             root: TreeNode::new(None, &Value::Null, 1),
         })
