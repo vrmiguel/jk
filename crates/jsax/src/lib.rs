@@ -62,7 +62,7 @@ pub enum ArrayNextToken {
     Value,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 pub enum Event<'a> {
     StartObject,
     EndObject { member_count: usize },

@@ -46,18 +46,11 @@ fn run() -> anyhow::Result<()> {
             let source = source.load()?;
 
             let parse_start = Instant::now();
-            let parser = jsax::Parser::new(source.as_str()?);
             let bump = bumpalo::Bump::new();
-            let tree = KeyedJsonElement::parse(parser, &bump)?;
+            let tree = KeyedJsonElement::parse(source.as_str()?, &bump)?;
             dbg!(parse_start.elapsed());
 
-            let _ = std::hint::black_box(&tree);
-
             viewer::start_viewer(&tree)?;
-            if true {
-                // skip drop intentionally
-                std::process::exit(0);
-            }
         }
         Command::Flatten => {
             let source = source.load()?;
