@@ -3,7 +3,9 @@ use std::hint::black_box;
 use bumpalo::Bump;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use jk::Value;
-use jk::fold_tree::{DisplayRow, DisplayRowKind, FoldableJsonViewTree};
+use jk::fold_tree::{
+    DisplayRow, DisplayRowKind, FoldableJsonViewTree, JsonElement, KeyedJsonElement,
+};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -12,31 +14,35 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-pub fn start_viewer(text: &str) -> anyhow::Result<()> {
-    let instant = std::time::Instant::now();
-    let bump = Bump::new();
-    let ctx = Ctx::parse(text, &bump);
-    eprintln!("elapsed for ctx: {:?}", instant.elapsed());
+pub fn start_viewer(json: &KeyedJsonElement) -> anyhow::Result<()> {
+    // let instant = std::time::Instant::now();
+    let mut ctx = Ctx::new(json);
+    // eprintln!("elapsed for ctx: {:?}", instant.elapsed());
 
-    std::hint::black_box(ctx);
+    // std::hint::black_box(ctx);
 
-    // let mut terminal = ratatui::init();
-    // loop {
-    //     terminal
-    //         .draw(|frame| {
-    //             let viewport_height = viewport_height(frame.area());
-    //             ctx.viewport_height = viewport_height;
-    //             draw(frame, &ctx);
-    //         })
-    //         .expect("failed to draw frame");
+    if true {
+        // skip drop intentionally
+        std::process::exit(0);
+    }
 
-    //     if let Event::Key(key) = event::read().expect("failed to read event")
-    //         && ctx.handle_key_event(key)
-    //     {
-    //         break;
-    //     }
-    // }
-    // ratatui::restore();
+    let mut terminal = ratatui::init();
+    loop {
+        terminal
+            .draw(|frame| {
+                let viewport_height = viewport_height(frame.area());
+                ctx.viewport_height = viewport_height;
+                draw(frame, &ctx);
+            })
+            .expect("failed to draw frame");
+
+        if let Event::Key(key) = event::read().expect("failed to read event")
+            && ctx.handle_key_event(key)
+        {
+            break;
+        }
+    }
+    ratatui::restore();
     Ok(())
 }
 
@@ -49,15 +55,13 @@ struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
-    fn parse(text: &'a str, bump: &bumpalo::Bump) -> Result<Self, jsax::Error> {
-        let tree = FoldableJsonViewTree::parse(text, bump)?;
-
-        Ok(Self {
-            tree,
+    fn new(root_element: &'a KeyedJsonElement<'a>) -> Self {
+        Self {
+            tree: FoldableJsonViewTree::new(root_element),
             cursor: 0,
             scroll_offset: 0,
             viewport_height: 0,
-        })
+        }
     }
 
     fn total_lines(&self) -> usize {
@@ -209,36 +213,36 @@ fn render_display_row(row: &DisplayRow, needs_comma: bool) -> Vec<Span<'static>>
                 spans.push(Span::styled(": ", Style::default().fg(Color::Gray)));
             }
 
-            match line.value {
-                Value::Null => {
+            match line.inner {
+                JsonElement::Null => {
                     spans.push(Span::styled("null", Style::default().fg(Color::Red)));
                 }
-                Value::Bool(b) => {
+                JsonElement::Bool(b) => {
                     spans.push(Span::styled(
                         b.to_string(),
                         Style::default().fg(Color::Magenta),
                     ));
                 }
-                Value::Number(n) => {
+                JsonElement::Number(n) => {
                     spans.push(Span::styled(
                         n.to_string(),
                         Style::default().fg(Color::Yellow),
                     ));
                 }
-                Value::String(s) => {
+                JsonElement::String(s) => {
                     spans.push(Span::styled(
                         format!("\"{}\"", s),
                         Style::default().fg(Color::Green),
                     ));
                 }
-                Value::Array(_) => {
+                JsonElement::Array(_) => {
                     spans.push(Span::styled("[", Style::default().fg(Color::Gray)));
                     if *is_collapsed {
                         spans.push(Span::styled(" ... ", Style::default().fg(Color::DarkGray)));
                         spans.push(Span::styled("]", Style::default().fg(Color::Gray)));
                     }
                 }
-                Value::Object(_) => {
+                JsonElement::Object(_) => {
                     spans.push(Span::styled("{", Style::default().fg(Color::Gray)));
                     if *is_collapsed {
                         spans.push(Span::styled(" ... ", Style::default().fg(Color::DarkGray)));
