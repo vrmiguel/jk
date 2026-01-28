@@ -1,8 +1,4 @@
-use std::hint::black_box;
-
-use bumpalo::Bump;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
-use jk::Value;
 use jk::fold_tree::{
     DisplayRow, DisplayRowKind, FoldableJsonViewTree, JsonElement, KeyedJsonElement,
 };
@@ -15,16 +11,7 @@ use ratatui::{
 };
 
 pub fn start_viewer(json: &KeyedJsonElement) -> anyhow::Result<()> {
-    // let instant = std::time::Instant::now();
     let mut ctx = Ctx::new(json);
-    // eprintln!("elapsed for ctx: {:?}", instant.elapsed());
-
-    // std::hint::black_box(ctx);
-
-    if true {
-        // skip drop intentionally
-        std::process::exit(0);
-    }
 
     let mut terminal = ratatui::init();
     loop {

@@ -1,15 +1,11 @@
-use std::{fmt, mem, ops::Range, time::Instant};
+#[cfg(test)]
+use std::fmt;
+use std::{mem, ops::Range};
 
 use bumpalo::Bump;
 use jsax::Event;
 
 type BumpLinkedList<'a, T> = std::collections::LinkedList<T, &'a Bump>;
-// Por conta de como os vecs anteriores podem crescer depois, isso aqui ainda
-// vai causar muita fragmentação, eu pensei em usar tipo umas linkedlists para evitar
-// fragmentação completamente mas aí não ficaria mais lento? por conta de linkedlist
-//
-// quando acabar esse código todo, fazer um benchmark sem bumpalo para ver se muda
-// alguma pourran
 
 // Putting a key together with the element like this makes it easier for
 // us to display an element in a line by just grabbing one node, instead
@@ -24,9 +20,9 @@ pub struct KeyedJsonElement<'a> {
 pub enum JsonElement<'a> {
     // BumpLinkedList here ran 10% faster than BumpVec
     Object(BumpLinkedList<'a, KeyedJsonElement<'a>>),
-    // These technically can't be keyed, so we could put `Self` here instead,
-    // but it's easier this way so that the implementation can expect a
-    // reference for the same type everywhere
+    // The values in an array can't be keyed, we _could_ use `Self` here
+    // instead, but by using `KeyedJsonElement`, other pieces of code can hold
+    // &KeyedJsonElement, it's a small cost for a simpler implementation
     Array(BumpLinkedList<'a, KeyedJsonElement<'a>>),
     String(&'a str),
     Number(&'a str),
@@ -114,9 +110,7 @@ pub struct FoldableJsonViewTree<'a> {
 
 impl<'a> FoldableJsonViewTree<'a> {
     pub fn new(tree: &'a KeyedJsonElement) -> Self {
-        let start = Instant::now();
-        let root = TreeNode::new(&tree, 0);
-        println!("New call took {:?}", start.elapsed());
+        let root = TreeNode::new(tree, 0);
         FoldableJsonViewTree { root }
     }
 

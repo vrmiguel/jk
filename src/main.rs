@@ -1,7 +1,6 @@
 use std::{
     io::{self, BufWriter, Write},
     process::ExitCode,
-    time::Instant,
 };
 
 use jk::fold_tree::KeyedJsonElement;
@@ -45,10 +44,8 @@ fn run() -> anyhow::Result<()> {
         Command::View => {
             let source = source.load()?;
 
-            let parse_start = Instant::now();
             let bump = bumpalo::Bump::new();
             let tree = KeyedJsonElement::parse(source.as_str()?, &bump)?;
-            dbg!(parse_start.elapsed());
 
             viewer::start_viewer(&tree)?;
         }
