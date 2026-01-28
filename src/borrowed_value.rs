@@ -1,8 +1,8 @@
 use indexmap::IndexMap;
 use jsax::Event;
-use rapidhash::fast::RandomState;
+use rapidhash::fast::RandomState as FastHash;
 
-pub type Map<'a> = IndexMap<&'a str, Value<'a>, RandomState>;
+pub type Map<'a> = IndexMap<&'a str, Value<'a>, FastHash>;
 
 #[derive(Clone, Debug)]
 pub enum Value<'a> {
@@ -16,7 +16,7 @@ pub enum Value<'a> {
 
 impl<'a> Value<'a> {
     pub fn object() -> Self {
-        Self::Object(IndexMap::with_hasher(RandomState::default()))
+        Self::Object(IndexMap::default())
     }
 
     pub fn array() -> Self {
