@@ -1,23 +1,117 @@
-use std::{fmt, mem, ops::Range};
+#[cfg(test)]
+use std::fmt;
+use std::{mem, ops::Range};
 
-use crate::Value;
+use bumpalo::Bump;
+use jsax::Event;
 
-#[derive(Debug, Clone, Copy)]
-pub struct JsonLine<'a> {
+type BumpLinkedList<'a, T> = std::collections::LinkedList<T, &'a Bump>;
+
+// Putting a key together with the element like this makes it easier for
+// us to display an element in a line by just grabbing one node, instead
+// of having to read parent and child.
+#[derive(Debug)]
+pub struct KeyedJsonElement<'a> {
     pub key: Option<&'a str>,
-    pub value: &'a Value<'a>,
+    pub inner: JsonElement<'a>,
+}
+
+#[derive(Debug)]
+pub enum JsonElement<'a> {
+    // BumpLinkedList here ran 10% faster than BumpVec
+    Object(BumpLinkedList<'a, KeyedJsonElement<'a>>),
+    // The values in an array can't be keyed, we _could_ use `Self` here
+    // instead, but by using `KeyedJsonElement`, other pieces of code can hold
+    // &KeyedJsonElement, it's a small cost for a simpler implementation
+    Array(BumpLinkedList<'a, KeyedJsonElement<'a>>),
+    String(&'a str),
+    Number(&'a str),
+    Bool(bool),
+    Null,
+}
+
+impl<'a> KeyedJsonElement<'a> {
+    pub fn parse(text: &'a str, bump: &'a Bump) -> Result<Self, jsax::Error> {
+        let mut parser = jsax::Parser::new(text);
+        let mut stack: Vec<ContainerElement> = Vec::new();
+        let mut key_stack = Vec::new();
+
+        let finished_tree = loop {
+            let Some(event) = parser.parse_next()? else {
+                return Err(jsax::Error::Unexpected(
+                    "empty or incomplete JSON".to_string(),
+                ));
+            };
+
+            let mut element_to_add = None;
+            match event {
+                Event::Number(n) => element_to_add = Some(JsonElement::Number(n)),
+                Event::String(s) => element_to_add = Some(JsonElement::String(s)),
+                Event::Boolean(b) => element_to_add = Some(JsonElement::Bool(b)),
+                Event::Null => element_to_add = Some(JsonElement::Null),
+                Event::EndObject { .. } | Event::EndArray { .. } => {
+                    element_to_add = Some(match stack.pop().unwrap() {
+                        ContainerElement::Object(pairs) => JsonElement::Object(pairs),
+                        ContainerElement::Array(elements) => JsonElement::Array(elements),
+                    });
+                }
+
+                Event::StartObject => {
+                    stack.push(ContainerElement::Object(BumpLinkedList::new_in(bump)))
+                }
+                Event::StartArray => {
+                    stack.push(ContainerElement::Array(BumpLinkedList::new_in(bump)))
+                }
+                Event::Key(key) => key_stack.push(Some(key)),
+            };
+
+            if let Some(element) = element_to_add {
+                let Some(container) = stack.last_mut() else {
+                    break element;
+                };
+
+                match container {
+                    ContainerElement::Object(pairs) => {
+                        let key = key_stack.pop().unwrap();
+                        pairs.push_back(KeyedJsonElement {
+                            key,
+                            inner: element,
+                        });
+                    }
+                    ContainerElement::Array(arr) => {
+                        arr.push_back(KeyedJsonElement {
+                            key: None,
+                            inner: element,
+                        });
+                    }
+                }
+            }
+        };
+
+        // Root-level json element can't have a key
+        let finished_tree = KeyedJsonElement {
+            key: None,
+            inner: finished_tree,
+        };
+
+        Ok(finished_tree)
+    }
+}
+
+enum ContainerElement<'a> {
+    Object(BumpLinkedList<'a, KeyedJsonElement<'a>>),
+    Array(BumpLinkedList<'a, KeyedJsonElement<'a>>),
 }
 
 #[derive(Debug)]
 pub struct FoldableJsonViewTree<'a> {
-    root: Node<'a>,
+    root: TreeNode<'a>,
 }
 
 impl<'a> FoldableJsonViewTree<'a> {
-    pub fn new(value: &'a Value) -> Self {
-        FoldableJsonViewTree {
-            root: Node::new(None, value, 0),
-        }
+    pub fn new(tree: &'a KeyedJsonElement) -> Self {
+        let root = TreeNode::new(tree, 0);
+        FoldableJsonViewTree { root }
     }
 
     pub fn display_rows(&self, range: Range<usize>) -> Vec<DisplayRow<'a>> {
@@ -59,28 +153,26 @@ impl<'a> FoldableJsonViewTree<'a> {
 }
 
 /// A node in this tree can represent multiple lines, check [`NodeKind`].
-#[derive(Debug, Clone)]
-pub struct Node<'a> {
+#[derive(Debug)]
+pub struct TreeNode<'a> {
     length: usize,
     original_range: Range<usize>,
     kind: NodeKind<'a>,
 }
 
-impl<'a> Node<'a> {
-    fn new(key: Option<&'a str>, value: &'a Value, line_offset: usize) -> Self {
-        let collapsable_node = match value {
-            Value::Array(array) => {
-                let iter = array.iter().map(|v| (None, v));
-                Some(Self::new_from_contents(iter, line_offset + 1))
-            }
-            Value::Object(object) => {
-                let iter = object.iter().map(|(k, v)| (Some(*k), v));
-                Some(Self::new_from_contents(iter, line_offset + 1))
-            }
-            _ => None,
+impl<'a> TreeNode<'a> {
+    fn new(element: &'a KeyedJsonElement, line_offset: usize) -> Self {
+        let collapsible_node = {
+            let iter = match &element.inner {
+                JsonElement::Array(array) => Some(array.iter()),
+                JsonElement::Object(object) => Some(object.iter()),
+                _ => None,
+            };
+
+            iter.map(|iter| Self::new_from_contents(iter, line_offset + 1))
         };
 
-        match collapsable_node {
+        match collapsible_node {
             Some(inner_contents) => {
                 let contents_size = inner_contents.as_ref().map_or(0, |node| node.length);
                 let original_range = line_offset..line_offset + contents_size + 2; // add 2 for the opening and closing lines
@@ -90,7 +182,7 @@ impl<'a> Node<'a> {
                     kind: NodeKind::Collapsible {
                         is_collapsed: false,
                         nested_contents: inner_contents.map(Box::new),
-                        line: JsonLine { key, value },
+                        element,
                     },
                 }
             }
@@ -98,27 +190,24 @@ impl<'a> Node<'a> {
                 length: 1,
                 original_range: line_offset..line_offset + 1,
                 kind: NodeKind::NonCollapsible {
-                    lines: Vec::from([JsonLine { key, value }]),
+                    lines: Vec::from([element]),
                 },
             },
         }
     }
 
-    fn new_from_contents<I>(values_iter: I, offset: usize) -> Option<Self>
+    fn new_from_contents<I>(elements_iter: I, offset: usize) -> Option<Self>
     where
-        I: Iterator<Item = (Option<&'a str>, &'a Value<'a>)> + 'a,
+        I: Iterator<Item = &'a KeyedJsonElement<'a>> + 'a,
     {
-        let mut values_iter = values_iter.peekable();
-        values_iter.peek()?; // early return
-
         let mut values = Vec::<Self>::new();
         let mut next_element_offset = offset;
 
-        for (key, value) in values_iter {
-            let node = Node::new(key, value, next_element_offset);
+        for element in elements_iter {
+            let node = TreeNode::new(element, next_element_offset);
             next_element_offset += node.length;
 
-            // merge any two consecutive NonCollapsable regions
+            // merge any two consecutive NonCollapsible regions
             if let Some(last) = values.last_mut()
                 && let NodeKind::NonCollapsible {
                     lines: last_node_lines,
@@ -131,6 +220,10 @@ impl<'a> Node<'a> {
             } else {
                 values.push(node);
             }
+        }
+
+        if values.is_empty() {
+            return None;
         }
 
         node_array_into_tree(values)
@@ -146,7 +239,7 @@ impl<'a> Node<'a> {
             NodeKind::Collapsible {
                 is_collapsed,
                 nested_contents: contents,
-                line: _,
+                element: _,
             } => {
                 // Check if current node is the target one
                 if target_remaining_offset == 0 {
@@ -230,7 +323,7 @@ impl<'a> Node<'a> {
                 }
             }
             NodeKind::Collapsible {
-                line,
+                element,
                 is_collapsed,
                 nested_contents: contents,
             } => {
@@ -238,7 +331,7 @@ impl<'a> Node<'a> {
                     rows.push(DisplayRow {
                         depth,
                         kind: DisplayRowKind::Element {
-                            line: *line,
+                            line: element,
                             is_collapsed: *is_collapsed,
                         },
                     });
@@ -254,7 +347,7 @@ impl<'a> Node<'a> {
                         rows.push(DisplayRow {
                             depth,
                             kind: DisplayRowKind::ClosingSymbol {
-                                symbol: closing_symbol_of_collapsable_element(line.value),
+                                symbol: closing_symbol_of_collapsible_element(&element.inner),
                             },
                         });
                     }
@@ -268,28 +361,30 @@ impl<'a> Node<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum NodeKind<'a> {
-    /// One or multiple lines of non-collapsable json elements.
-    NonCollapsible { lines: Vec<JsonLine<'a>> },
-    /// A single collapsable element (array or object) and it's contents.
+    /// One or multiple lines of non-collapsible json elements.
+    NonCollapsible {
+        lines: Vec<&'a KeyedJsonElement<'a>>,
+    },
+    /// A single collapsible element (array or object) and it's contents.
     Collapsible {
-        line: JsonLine<'a>,
+        element: &'a KeyedJsonElement<'a>,
         is_collapsed: bool,
-        nested_contents: Option<Box<Node<'a>>>,
+        nested_contents: Option<Box<TreeNode<'a>>>,
     },
     /// A sequence of nodes that can be searched in logarithmic time.
     ///
     /// Can only appear as the `nested_contents` field of a NodeKind::Collapsible.
     SubTree {
-        left: Box<Node<'a>>,
-        right: Box<Node<'a>>,
+        left: Box<TreeNode<'a>>,
+        right: Box<TreeNode<'a>>,
     },
 }
 
 #[allow(dead_code)]
 impl NodeKind<'_> {
-    pub fn is_collapsable(&self) -> bool {
+    pub fn is_collapsible(&self) -> bool {
         matches!(self, NodeKind::Collapsible { .. })
     }
 
@@ -297,7 +392,7 @@ impl NodeKind<'_> {
         matches!(self, NodeKind::SubTree { .. })
     }
 
-    pub fn is_non_collapsable(&self) -> bool {
+    pub fn is_non_collapsible(&self) -> bool {
         matches!(self, NodeKind::NonCollapsible { .. })
     }
 }
@@ -311,7 +406,7 @@ pub struct DisplayRow<'a> {
 #[derive(Debug)]
 pub enum DisplayRowKind<'a> {
     Element {
-        line: JsonLine<'a>,
+        line: &'a KeyedJsonElement<'a>,
         is_collapsed: bool,
     },
     ClosingSymbol {
@@ -319,6 +414,7 @@ pub enum DisplayRowKind<'a> {
     },
 }
 
+#[cfg(test)]
 impl fmt::Display for DisplayRow<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         '_lol_: {
@@ -345,15 +441,15 @@ impl fmt::Display for DisplayRow<'_> {
                     write!(f, "\"{}\": ", key)?;
                 }
 
-                match line.value {
-                    Value::Null => writeln!(f, "null")?,
-                    Value::Bool(boo) => writeln!(f, "{boo}")?,
-                    Value::Number(n) => writeln!(f, "{n}")?,
-                    Value::String(s) => writeln!(f, "\"{s}\"")?,
-                    Value::Array(_) => {
+                match line.inner {
+                    JsonElement::Null => writeln!(f, "null")?,
+                    JsonElement::Bool(boo) => writeln!(f, "{boo}")?,
+                    JsonElement::Number(n) => writeln!(f, "{n}")?,
+                    JsonElement::String(s) => writeln!(f, "\"{s}\"")?,
+                    JsonElement::Array(_) => {
                         writeln!(f, "[{}", if *is_collapsed { " ]" } else { "" })?;
                     }
-                    Value::Object(_) => {
+                    JsonElement::Object(_) => {
                         writeln!(f, "{{{}", if *is_collapsed { " }" } else { "" })?;
                     }
                 }
@@ -363,9 +459,7 @@ impl fmt::Display for DisplayRow<'_> {
     }
 }
 
-fn node_array_into_tree(mut nodes: Vec<Node>) -> Option<Node> {
-    assert!(!nodes.is_empty());
-
+fn node_array_into_tree(mut nodes: Vec<TreeNode>) -> Option<TreeNode> {
     while nodes.len() > 1 {
         let mut taken = mem::take(&mut nodes).into_iter();
 
@@ -377,7 +471,7 @@ fn node_array_into_tree(mut nodes: Vec<Node>) -> Option<Node> {
                 break;
             };
             let original_range = left.original_range.start..right.original_range.end;
-            nodes.push(Node {
+            nodes.push(TreeNode {
                 length: original_range.len(),
                 original_range,
                 kind: NodeKind::SubTree {
@@ -391,10 +485,10 @@ fn node_array_into_tree(mut nodes: Vec<Node>) -> Option<Node> {
     nodes.pop()
 }
 
-fn closing_symbol_of_collapsable_element(value: &Value) -> char {
-    match value {
-        Value::Array(_) => ']',
-        Value::Object(_) => '}',
+fn closing_symbol_of_collapsible_element(element: &JsonElement) -> char {
+    match element {
+        JsonElement::Array(_) => ']',
+        JsonElement::Object(_) => '}',
         _ => unreachable!(),
     }
 }
@@ -416,7 +510,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::borrowed_value;
 
     #[test]
     fn test_fold_tree() {
@@ -432,7 +525,8 @@ mod tests {
                 ]
             ]
         }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
+        let bump = Bump::new();
+        let json = KeyedJsonElement::parse(json_str, &bump).unwrap();
 
         let mut tree = FoldableJsonViewTree::new(&json);
 
@@ -551,7 +645,8 @@ mod tests {
             "age": 30,
             "items": [1, 2, 3]
         }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
+        let bump = Bump::new();
+        let json = KeyedJsonElement::parse(json_str, &bump).unwrap();
         let mut tree = FoldableJsonViewTree::new(&json);
 
         // Initial state: fully expanded
@@ -593,7 +688,8 @@ mod tests {
                 ]
             ]
         }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
+        let bump = Bump::new();
+        let json = KeyedJsonElement::parse(json_str, &bump).unwrap();
         let mut tree = FoldableJsonViewTree::new(&json);
 
         // Initial state: fully expanded
@@ -650,7 +746,8 @@ mod tests {
                 }
             }
         }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
+        let bump = Bump::new();
+        let json = KeyedJsonElement::parse(json_str, &bump).unwrap();
         let mut tree = FoldableJsonViewTree::new(&json);
 
         assert_root_length_matches_display_rows(&tree);
@@ -702,7 +799,8 @@ mod tests {
             ],
             "count": 2
         }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
+        let bump = Bump::new();
+        let json = KeyedJsonElement::parse(json_str, &bump).unwrap();
         let mut tree = FoldableJsonViewTree::new(&json);
 
         assert_root_length_matches_display_rows(&tree);
@@ -762,7 +860,8 @@ mod tests {
             "null": null,
             "array": []
         }"#;
-        let json = borrowed_value::parse_value(json_str).unwrap();
+        let bump = Bump::new();
+        let json = KeyedJsonElement::parse(json_str, &bump).unwrap();
         let mut tree = FoldableJsonViewTree::new(&json);
 
         assert_root_length_matches_display_rows(&tree);

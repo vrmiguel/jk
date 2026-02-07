@@ -1,6 +1,7 @@
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
-use jk::Value;
-use jk::fold_tree::{DisplayRow, DisplayRowKind, FoldableJsonViewTree};
+use jk::fold_tree::{
+    DisplayRow, DisplayRowKind, FoldableJsonViewTree, JsonElement, KeyedJsonElement,
+};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -9,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-pub fn start_viewer(json: &Value) -> anyhow::Result<()> {
+pub fn start_viewer(json: &KeyedJsonElement) -> anyhow::Result<()> {
     let mut ctx = Ctx::new(json);
 
     let mut terminal = ratatui::init();
@@ -41,11 +42,9 @@ struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
-    fn new(json: &'a Value) -> Self {
-        let tree = FoldableJsonViewTree::new(json);
-
+    fn new(root_element: &'a KeyedJsonElement<'a>) -> Self {
         Self {
-            tree,
+            tree: FoldableJsonViewTree::new(root_element),
             cursor: 0,
             scroll_offset: 0,
             viewport_height: 0,
@@ -201,36 +200,36 @@ fn render_display_row(row: &DisplayRow, needs_comma: bool) -> Vec<Span<'static>>
                 spans.push(Span::styled(": ", Style::default().fg(Color::Gray)));
             }
 
-            match line.value {
-                Value::Null => {
+            match line.inner {
+                JsonElement::Null => {
                     spans.push(Span::styled("null", Style::default().fg(Color::Red)));
                 }
-                Value::Bool(b) => {
+                JsonElement::Bool(b) => {
                     spans.push(Span::styled(
                         b.to_string(),
                         Style::default().fg(Color::Magenta),
                     ));
                 }
-                Value::Number(n) => {
+                JsonElement::Number(n) => {
                     spans.push(Span::styled(
                         n.to_string(),
                         Style::default().fg(Color::Yellow),
                     ));
                 }
-                Value::String(s) => {
+                JsonElement::String(s) => {
                     spans.push(Span::styled(
                         format!("\"{}\"", s),
                         Style::default().fg(Color::Green),
                     ));
                 }
-                Value::Array(_) => {
+                JsonElement::Array(_) => {
                     spans.push(Span::styled("[", Style::default().fg(Color::Gray)));
                     if *is_collapsed {
                         spans.push(Span::styled(" ... ", Style::default().fg(Color::DarkGray)));
                         spans.push(Span::styled("]", Style::default().fg(Color::Gray)));
                     }
                 }
-                Value::Object(_) => {
+                JsonElement::Object(_) => {
                     spans.push(Span::styled("{", Style::default().fg(Color::Gray)));
                     if *is_collapsed {
                         spans.push(Span::styled(" ... ", Style::default().fg(Color::DarkGray)));

@@ -3,6 +3,7 @@ use std::{
     process::ExitCode,
 };
 
+use jk::fold_tree::KeyedJsonElement;
 use jsax::Parser;
 use syntect::{
     easy::HighlightLines,
@@ -42,8 +43,11 @@ fn run() -> anyhow::Result<()> {
     match command {
         Command::View => {
             let source = source.load()?;
-            let json = jk::borrowed_value::parse_value(source.as_str()?).unwrap();
-            viewer::start_viewer(&json)?;
+
+            let bump = bumpalo::Bump::new();
+            let tree = KeyedJsonElement::parse(source.as_str()?, &bump)?;
+
+            viewer::start_viewer(&tree)?;
         }
         Command::Flatten => {
             let source = source.load()?;

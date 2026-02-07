@@ -1,3 +1,5 @@
+#![feature(allocator_api)]
+
 /// Similar to `serde_json::Value`, but keeps only references to source data
 pub mod borrowed_value;
 /// Prints a flattened version of the loaded JSON
