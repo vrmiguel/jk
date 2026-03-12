@@ -5,7 +5,25 @@ use std::{mem, ops::Range};
 use bumpalo::Bump;
 use jsax::Event;
 
-type BumpLinkedList<'a, T> = std::collections::LinkedList<T, &'a Bump>;
+#[cfg(feature = "nightly")]
+type BumpCollection<'a, T> = std::collections::LinkedList<T, &'a Bump>;
+
+#[cfg(not(feature = "nightly"))]
+type BumpCollection<'a, T> = bumpalo::collections::Vec<'a, T>;
+
+#[cfg(not(feature = "nightly"))]
+trait PushBack<T> {
+    fn push_back(&mut self, value: T);
+}
+
+#[cfg(not(feature = "nightly"))]
+impl<'a, T: 'a> PushBack<T> for bumpalo::collections::Vec<'a, T> {
+    fn push_back(&mut self, value: T) {
+        self.push(value);
+    }
+}
+
+// BumpVec
 
 // Putting a key together with the element like this makes it easier for
 // us to display an element in a line by just grabbing one node, instead
@@ -18,12 +36,12 @@ pub struct KeyedJsonElement<'a> {
 
 #[derive(Debug)]
 pub enum JsonElement<'a> {
-    // BumpLinkedList here ran 10% faster than BumpVec
-    Object(BumpLinkedList<'a, KeyedJsonElement<'a>>),
+    // On nightly, BumpCollection is a LinkedList<T, &Bump> which seems to run 10% faster than BumpVec
+    Object(BumpCollection<'a, KeyedJsonElement<'a>>),
     // The values in an array can't be keyed, we _could_ use `Self` here
     // instead, but by using `KeyedJsonElement`, other pieces of code can hold
     // &KeyedJsonElement, it's a small cost for a simpler implementation
-    Array(BumpLinkedList<'a, KeyedJsonElement<'a>>),
+    Array(BumpCollection<'a, KeyedJsonElement<'a>>),
     String(&'a str),
     Number(&'a str),
     Bool(bool),
@@ -57,10 +75,10 @@ impl<'a> KeyedJsonElement<'a> {
                 }
 
                 Event::StartObject => {
-                    stack.push(ContainerElement::Object(BumpLinkedList::new_in(bump)))
+                    stack.push(ContainerElement::Object(BumpCollection::new_in(bump)))
                 }
                 Event::StartArray => {
-                    stack.push(ContainerElement::Array(BumpLinkedList::new_in(bump)))
+                    stack.push(ContainerElement::Array(BumpCollection::new_in(bump)))
                 }
                 Event::Key(key) => key_stack.push(Some(key)),
             };
@@ -99,8 +117,8 @@ impl<'a> KeyedJsonElement<'a> {
 }
 
 enum ContainerElement<'a> {
-    Object(BumpLinkedList<'a, KeyedJsonElement<'a>>),
-    Array(BumpLinkedList<'a, KeyedJsonElement<'a>>),
+    Object(BumpCollection<'a, KeyedJsonElement<'a>>),
+    Array(BumpCollection<'a, KeyedJsonElement<'a>>),
 }
 
 #[derive(Debug)]

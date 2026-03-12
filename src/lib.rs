@@ -1,4 +1,4 @@
-#![feature(allocator_api)]
+#![cfg_attr(feature = "nightly", feature(allocator_api))]
 
 /// Similar to `serde_json::Value`, but keeps only references to source data
 pub mod borrowed_value;
