@@ -2,6 +2,11 @@
 name = "jsax"
 version = "0.1.0"
 edition = "2024"
+authors = ["Vinícius Miguel <vrmiguel99@gmail.com>"]
+description = "A SAX-style parser for JSON."
+repository = "https://github.com/vrmiguel/jk"
+homepage = "https://github.com/vrmiguel/jk"
+license = "MIT"
 
 [dependencies]
 logos = "0.15.1"
