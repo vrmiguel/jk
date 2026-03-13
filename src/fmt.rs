@@ -3,7 +3,7 @@ use std::io;
 use anyhow::Context as AnyContext;
 use jsax::{Event, Parser};
 
-use crate::borrowed_value::ValueEvents;
+use crate::borrowed_value::{Value, ValueEvents};
 
 pub trait EventSource {
     fn next_event(&mut self) -> Result<Option<Event<'_>>, jsax::Error>;
@@ -167,6 +167,56 @@ impl<W: io::Write, const USE_COLORS: bool> Writer<W, USE_COLORS> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<()> {
         self.inner.write_all(buf)
+    }
+}
+
+pub fn format_value<W: io::Write, const USE_COLORS: bool>(value: &Value<'_>, output: W) -> io::Result<()> {
+    write_value_recursive(value, &mut Writer::<_, USE_COLORS>::new(output), 0)
+}
+
+fn write_value_recursive<W: io::Write, const USE_COLORS: bool>(
+    value: &Value<'_>,
+    writer: &mut Writer<W, USE_COLORS>,
+    depth: usize,
+) -> io::Result<()> {
+    match value {
+        Value::Null => writer.null(),
+        Value::Bool(b) => writer.boolean(*b),
+        Value::Number(n) => writer.number(n),
+        Value::String(s) => writer.string_value(s),
+        Value::Object(map) => {
+            writer.structural_char(b'{')?;
+            for (i, (key, val)) in map.iter().enumerate() {
+                if i > 0 {
+                    writer.structural_char(b',')?;
+                }
+                writer.newline()?;
+                writer.indentation(depth + 1)?;
+                writer.key(key)?;
+                write_value_recursive(val, writer, depth + 1)?;
+            }
+            if !map.is_empty() {
+                writer.newline()?;
+                writer.indentation(depth)?;
+            }
+            writer.structural_char(b'}')
+        }
+        Value::Array(arr) => {
+            writer.structural_char(b'[')?;
+            for (i, val) in arr.iter().enumerate() {
+                if i > 0 {
+                    writer.structural_char(b',')?;
+                }
+                writer.newline()?;
+                writer.indentation(depth + 1)?;
+                write_value_recursive(val, writer, depth + 1)?;
+            }
+            if !arr.is_empty() {
+                writer.newline()?;
+                writer.indentation(depth)?;
+            }
+            writer.structural_char(b']')
+        }
     }
 }
 

@@ -2,8 +2,8 @@ use std::io::{BufWriter, Write, stdout};
 
 use anyhow::Context;
 
-use crate::borrowed_value::{Value, ValueEvents};
-use crate::fmt::Formatter;
+use crate::borrowed_value::Value;
+use crate::fmt;
 use crate::unflatten::{
     parser::Parser,
     types::{GronLine, GronValue, Index},
@@ -18,9 +18,9 @@ pub fn unflatten(input: &str, use_colors: bool) -> anyhow::Result<()> {
     let mut writer = BufWriter::new(stdout().lock());
 
     if use_colors {
-        Formatter::new_colored(ValueEvents::new(&value)).format_to(&mut writer)?;
+        fmt::format_value::<_, true>(&value, &mut writer)?;
     } else {
-        Formatter::new_plain(ValueEvents::new(&value)).format_to(&mut writer)?;
+        fmt::format_value::<_, false>(&value, &mut writer)?;
     }
 
     writer.flush().with_context(|| "failed to flush output")?;
@@ -192,9 +192,7 @@ json.hobbies[1][1] = "dancing";"#;
 
         let value = result.unwrap();
         let mut output = Vec::new();
-        Formatter::new_plain(ValueEvents::new(&value))
-            .format_to(&mut output)
-            .unwrap();
+        fmt::format_value::<_, false>(&value, &mut output).unwrap();
         let json_str = String::from_utf8(output).unwrap();
         assert!(json_str.contains("hobbies"));
     }

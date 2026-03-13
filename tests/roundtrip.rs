@@ -3,10 +3,8 @@ use std::io::BufWriter;
 use jsax::Parser;
 
 fn format_value(value: &jk::Value<'_>) -> String {
-    let mut output = Vec::new();
-    jk::fmt::Formatter::new_plain(jk::ValueEvents::new(value))
-        .format_to(&mut output)
-        .unwrap();
+    let mut output: Vec<u8> = Vec::new();
+    jk::fmt::format_value::<_, false>(value, &mut output).unwrap();
     String::from_utf8(output).unwrap()
 }
 

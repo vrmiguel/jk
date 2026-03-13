@@ -16,5 +16,5 @@ pub mod unflatten;
 
 pub use borrowed_value::{Value, ValueEvents};
 pub use flatten::flatten;
-pub use fmt::Formatter;
+pub use fmt::{Formatter, format_value};
 pub use jsax::{Event, Parser};
