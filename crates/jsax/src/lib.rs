@@ -1,17 +1,10 @@
 use std::ops::Range;
 
-use logos::{Lexer, Logos};
-
-mod lexer;
-
-use lexer::Token;
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("I/O error: {0}")]
     Io(std::io::Error),
     #[error("Unexpected token: {0}")]
-    // TODO: add expected?
     Unexpected(String),
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] std::str::Utf8Error),
@@ -97,26 +90,99 @@ impl Event<'_> {
     }
 }
 
-#[cold]
-fn unexpected(token: Token<'_>) -> Error {
-    Error::Unexpected(token.to_string())
-}
-
-/// A JSON streaming parser.
+/// A JSON SAX-style parser
 pub struct Parser<'source> {
-    /// The last parsed token
-    last_token: Token<'source>,
-    lexer: Lexer<'source, Token<'source>>,
+    input: &'source str,
+    bytes: &'source [u8],
+    pos: usize,
+    last_span: Range<usize>,
     context: Vec<Context>,
 }
 
 impl<'source> Parser<'source> {
     pub fn new(source: &'source str) -> Self {
         Self {
-            lexer: Token::lexer(source),
+            input: source,
+            bytes: source.as_bytes(),
+            pos: 0,
+            last_span: 0..0,
             context: vec![],
-            last_token: Token::Null,
         }
+    }
+
+    /// The range of the last parsed token
+    pub fn span(&self) -> Range<usize> {
+        self.last_span.clone()
+    }
+
+    pub fn parse_next_spanned(&mut self) -> Result<Option<(Event<'source>, Range<usize>)>, Error> {
+        self.parse_next_internal()
+    }
+
+    pub fn parse_next(&mut self) -> Result<Option<Event<'source>>, Error> {
+        self.parse_next_internal()
+            .map(|opt| opt.map(|(event, _)| event))
+    }
+
+    #[inline(always)]
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.pos).copied()
+    }
+
+    #[inline(always)]
+    fn skip_whitespace(&mut self) {
+        while self.pos < self.bytes.len() {
+            match self.bytes[self.pos] {
+                b' ' | b'\t' | b'\r' | b'\n' | 0x0C => self.pos += 1,
+                _ => return,
+            }
+        }
+    }
+
+    #[inline]
+    fn starts_with(&self, prefix: &str) -> bool {
+        self.bytes[self.pos..].starts_with(prefix.as_bytes())
+    }
+
+    /// Parses a JSON string, returning the content between quotes
+    #[inline]
+    fn parse_string(&mut self) -> Result<&'source str, Error> {
+        debug_assert_eq!(self.peek(), Some(b'"'));
+
+        // skip the opening quote
+        self.pos += 1;
+
+        let start = self.pos;
+        while self.pos < self.bytes.len() {
+            match self.bytes[self.pos] {
+                b'"' => {
+                    let content = &self.input[start..self.pos];
+                    // skip closing quote
+                    self.pos += 1;
+                    return Ok(content);
+                }
+                b'\\' => {
+                    // skips both the escape and the escaped character
+                    self.pos += 2;
+                }
+                _ => {
+                    self.pos += 1;
+                }
+            }
+        }
+        Err(Error::Unexpected("unterminated string".to_string()))
+    }
+
+    #[inline]
+    fn parse_number(&mut self) -> &'source str {
+        let start = self.pos;
+        while self.pos < self.bytes.len() {
+            match self.bytes[self.pos] {
+                b'0'..=b'9' | b'.' | b'-' | b'+' | b'e' | b'E' => self.pos += 1,
+                _ => break,
+            }
+        }
+        &self.input[start..self.pos]
     }
 
     #[inline]
@@ -129,12 +195,39 @@ impl<'source> Parser<'source> {
                 *expected_next_token = ObjNextToken::Value;
                 Ok(())
             }
-            _ => Err(unexpected(Token::Colon)),
+            _ => Err(Error::Unexpected(":".into())),
         }
     }
 
     #[inline]
-    fn consume_value(&mut self, token: Token) -> Result<(), Error> {
+    fn consume_comma(&mut self) -> Result<(), Error> {
+        match self.context.last_mut() {
+            Some(Context::Object {
+                expected_next_token,
+                ..
+            }) => match expected_next_token {
+                ObjNextToken::CommaOrClose => {
+                    *expected_next_token = ObjNextToken::Key;
+                    Ok(())
+                }
+                _ => Err(Error::Unexpected(",".into())),
+            },
+            Some(Context::Array {
+                expected_next_token,
+                ..
+            }) => match expected_next_token {
+                ArrayNextToken::CommaOrClose => {
+                    *expected_next_token = ArrayNextToken::Value;
+                    Ok(())
+                }
+                _ => Err(Error::Unexpected(",".into())),
+            },
+            _ => Err(Error::Unexpected(",".into())),
+        }
+    }
+
+    #[inline]
+    fn consume_value(&mut self, desc: &str) -> Result<(), Error> {
         match self.context.last_mut() {
             Some(Context::Object {
                 expected_next_token,
@@ -144,7 +237,7 @@ impl<'source> Parser<'source> {
                     *expected_next_token = ObjNextToken::CommaOrClose;
                     Ok(())
                 }
-                _ => Err(unexpected(token)),
+                _ => Err(Error::Unexpected(desc.to_string())),
             },
             Some(Context::Array {
                 len,
@@ -161,166 +254,148 @@ impl<'source> Parser<'source> {
         }
     }
 
-    #[inline]
-    fn consume_comma(&mut self) -> Result<(), Error> {
-        match self.context.last_mut() {
-            Some(Context::Object {
-                expected_next_token,
-                ..
-            }) => match expected_next_token {
-                ObjNextToken::CommaOrClose => {
-                    *expected_next_token = ObjNextToken::Key;
-                    Ok(())
-                }
-                _ => Err(unexpected(Token::Comma)),
-            },
-
-            //
-            Some(Context::Array {
-                expected_next_token,
-                ..
-            }) => match expected_next_token {
-                ArrayNextToken::CommaOrClose => {
-                    *expected_next_token = ArrayNextToken::Value;
-                    Ok(())
-                }
-                _ => Err(unexpected(Token::Comma)),
-            },
-            _ => Err(unexpected(Token::Comma)),
-        }
-    }
-
-    /// The range of the last parsed token
-    pub fn span(&self) -> Range<usize> {
-        match self.last_token {
-            // Logos returns the span including the double quotes, this removes them
-            Token::String(_) => {
-                let Range { start, end } = self.lexer.span();
-
-                Range {
-                    start: start + 1,
-                    end: end - 1,
-                }
-            }
-            _ => self.lexer.span(),
-        }
-    }
-
-    pub fn parse_next_spanned(&mut self) -> Result<Option<(Event<'source>, Range<usize>)>, Error> {
-        self.parse_next_internal()
-    }
-
-    pub fn parse_next(&mut self) -> Result<Option<Event<'source>>, Error> {
-        self.parse_next_internal()
-            .map(|opt| opt.map(|(event, _)| event))
-    }
-
-    // Inlining here is a win for `parse_next`'s performance, since the compiler
-    // seems to optimize away the unused span logic
     #[inline(always)]
     fn parse_next_internal(&mut self) -> Result<Option<(Event<'source>, Range<usize>)>, Error> {
-        while let Some(token) = self.lexer.next() {
-            let token = token.unwrap();
-            self.last_token = token;
-            let span = self.span();
+        loop {
+            self.skip_whitespace();
 
-            match token {
-                Token::Colon => {
+            let Some(byte) = self.peek() else {
+                return Ok(None);
+            };
+
+            let start = self.pos;
+
+            match byte {
+                b':' => {
+                    self.pos += 1;
                     self.consume_colon()?;
                 }
-                Token::Comma => {
+                b',' => {
+                    self.pos += 1;
                     self.consume_comma()?;
                 }
 
-                Token::Null => {
-                    self.consume_value(token)?;
-                    return Ok(Some((Event::Null, span)));
-                }
-                Token::Bool(boolean) => {
-                    self.consume_value(token)?;
-                    return Ok(Some((Event::Boolean(boolean), span)));
-                }
-                Token::BracketOpen => {
-                    self.consume_value(token)?;
-                    self.context.push(Context::Array {
-                        len: 0,
-                        expected_next_token: ArrayNextToken::ValueOrClose,
-                    });
-                    return Ok(Some((Event::StartArray, span)));
-                }
-                Token::BracketClose => match self.context.pop() {
-                    Some(Context::Array {
-                        len,
-                        expected_next_token,
-                    }) => {
-                        match expected_next_token {
-                            ArrayNextToken::ValueOrClose | ArrayNextToken::CommaOrClose => {
-                                // Valid states to close: empty array or after a value
-                                return Ok(Some((Event::EndArray { len }, span)));
-                            }
-                            ArrayNextToken::Value => {
-                                // After comma, must see value, not ]
-                                return Err(Error::TrailingComma);
-                            }
-                        }
-                    }
-                    _ => return Err(unexpected(token)),
-                },
-                Token::BraceOpen => {
-                    self.consume_value(token)?;
+                b'{' => {
+                    self.pos += 1;
+                    let span = start..self.pos;
+                    self.last_span = span.clone();
+                    self.consume_value("{")?;
                     self.context.push(Context::Object {
                         member_count: 0,
                         expected_next_token: ObjNextToken::KeyOrClose,
                     });
                     return Ok(Some((Event::StartObject, span)));
                 }
-                Token::BraceClose => match self.context.pop() {
-                    Some(Context::Object {
-                        member_count,
-                        expected_next_token,
-                    }) => match expected_next_token {
-                        ObjNextToken::KeyOrClose | ObjNextToken::CommaOrClose => {
-                            return Ok(Some((Event::EndObject { member_count }, span)));
-                        }
-                        _ => return Err(Error::TrailingComma),
-                    },
-                    _ => return Err(unexpected(token)),
-                },
-                Token::String(val) => match self.context() {
-                    Some(Context::Object {
-                        expected_next_token,
-                        member_count,
-                    }) => match expected_next_token {
-                        ObjNextToken::Key | ObjNextToken::KeyOrClose => {
-                            *expected_next_token = ObjNextToken::Colon;
-                            *member_count += 1;
-                            return Ok(Some((Event::Key(val), span)));
-                        }
-                        ObjNextToken::Value => {
-                            self.consume_value(token)?;
-                            return Ok(Some((Event::String(val), span)));
-                        }
-                        ObjNextToken::Colon | ObjNextToken::CommaOrClose => {
-                            return Err(unexpected(token));
-                        }
-                    },
-                    Some(Context::Array { .. }) | None => {
-                        self.consume_value(token)?;
-                        return Ok(Some((Event::String(val), span)));
+                b'}' => {
+                    self.pos += 1;
+                    let span = start..self.pos;
+                    self.last_span = span.clone();
+                    match self.context.pop() {
+                        Some(Context::Object {
+                            member_count,
+                            expected_next_token,
+                        }) => match expected_next_token {
+                            ObjNextToken::KeyOrClose | ObjNextToken::CommaOrClose => {
+                                return Ok(Some((Event::EndObject { member_count }, span)));
+                            }
+                            _ => return Err(Error::TrailingComma),
+                        },
+                        _ => return Err(Error::Unexpected("}".into())),
                     }
-                },
-                Token::Number(num) => {
-                    self.consume_value(token)?;
+                }
+                b'[' => {
+                    self.pos += 1;
+                    let span = start..self.pos;
+                    self.last_span = span.clone();
+                    self.consume_value("[")?;
+                    self.context.push(Context::Array {
+                        len: 0,
+                        expected_next_token: ArrayNextToken::ValueOrClose,
+                    });
+                    return Ok(Some((Event::StartArray, span)));
+                }
+                b']' => {
+                    self.pos += 1;
+                    let span = start..self.pos;
+                    self.last_span = span.clone();
+                    match self.context.pop() {
+                        Some(Context::Array {
+                            len,
+                            expected_next_token,
+                        }) => match expected_next_token {
+                            ArrayNextToken::ValueOrClose | ArrayNextToken::CommaOrClose => {
+                                return Ok(Some((Event::EndArray { len }, span)));
+                            }
+                            ArrayNextToken::Value => {
+                                return Err(Error::TrailingComma);
+                            }
+                        },
+                        _ => return Err(Error::Unexpected("]".into())),
+                    }
+                }
+                b'"' => {
+                    let val = self.parse_string()?;
+                    // Covers the content between quotes
+                    let span = (start + 1)..(self.pos - 1);
+                    self.last_span = span.clone();
+
+                    // In object context, a string might be a key
+                    if let Some(Context::Object {
+                        expected_next_token,
+                        member_count,
+                    }) = self.context.last_mut()
+                    {
+                        return match *expected_next_token {
+                            ObjNextToken::Key | ObjNextToken::KeyOrClose => {
+                                *expected_next_token = ObjNextToken::Colon;
+                                *member_count += 1;
+                                Ok(Some((Event::Key(val), span)))
+                            }
+                            ObjNextToken::Value => {
+                                *expected_next_token = ObjNextToken::CommaOrClose;
+                                Ok(Some((Event::String(val), span)))
+                            }
+                            _ => Err(Error::Unexpected(val.to_string())),
+                        };
+                    }
+
+                    // either array or top-level context
+                    self.consume_value(val)?;
+                    return Ok(Some((Event::String(val), span)));
+                }
+                b't' if self.starts_with("true") => {
+                    self.pos += 4;
+                    let span = start..self.pos;
+                    self.last_span = span.clone();
+                    self.consume_value("true")?;
+                    return Ok(Some((Event::Boolean(true), span)));
+                }
+                b'f' if self.starts_with("false") => {
+                    self.pos += 5;
+                    let span = start..self.pos;
+                    self.last_span = span.clone();
+                    self.consume_value("false")?;
+                    return Ok(Some((Event::Boolean(false), span)));
+                }
+                b'n' if self.starts_with("null") => {
+                    self.pos += 4;
+                    let span = start..self.pos;
+                    self.last_span = span.clone();
+                    self.consume_value("null")?;
+                    return Ok(Some((Event::Null, span)));
+                }
+                b if b == b'-' || b.is_ascii_digit() => {
+                    let num = self.parse_number();
+                    let span = start..self.pos;
+                    self.last_span = span.clone();
+                    self.consume_value(num)?;
                     return Ok(Some((Event::Number(num), span)));
                 }
-            };
+                other => {
+                    return Err(Error::Unexpected(format!("'{}'", other as char)));
+                }
+            }
         }
-
-        Ok(None)
-    }
-
-    fn context(&mut self) -> Option<&mut Context> {
-        self.context.last_mut()
     }
 }
 
