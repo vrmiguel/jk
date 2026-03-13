@@ -14,7 +14,7 @@ pub mod schema;
 /// Reverts `jk flatten` to its original form
 pub mod unflatten;
 
-pub use borrowed_value::{Value, ValueEvents, parse_value};
+pub use borrowed_value::{Value, ValueEvents};
 pub use flatten::flatten;
 pub use fmt::Formatter;
 pub use jsax::{Event, Parser};
