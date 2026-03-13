@@ -1,3 +1,5 @@
+use smallvec::SmallVec;
+
 use crate::borrowed_value::Value;
 
 #[cfg_attr(test, derive(PartialEq, Debug))]
@@ -9,13 +11,13 @@ pub struct GronLine<'a, 'b> {
 #[cfg_attr(test, derive(PartialEq, Debug))]
 pub struct Identifier<'a> {
     pub base: &'a str,
-    pub indices: Vec<Index<'a>>,
+    pub indices: SmallVec<[Index<'a>; 2]>,
 }
 
 #[cfg_attr(test, derive(PartialEq, Debug))]
 #[derive(Clone, Copy)]
 pub enum Index<'a> {
-    Numeric(&'a str),
+    Numeric(usize),
     String(&'a str),
 }
 

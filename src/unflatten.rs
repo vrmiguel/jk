@@ -9,7 +9,6 @@ use crate::unflatten::{
     types::{GronLine, GronValue, Index},
 };
 
-mod lexer;
 mod parser;
 mod types;
 
@@ -131,11 +130,8 @@ fn set_at_last_index<'a>(
     last_index: &Index<'a>,
     value: Value<'a>,
 ) -> anyhow::Result<()> {
-    match last_index {
-        Index::Numeric(idx_str) => {
-            let idx: usize = idx_str
-                .parse()
-                .with_context(|| format!("Invalid array index: {idx_str}"))?;
+    match *last_index {
+        Index::Numeric(idx) => {
             let arr = entry.as_array_mut().with_context(|| "Expected array")?;
             while arr.len() <= idx {
                 arr.push(Value::Null);
@@ -157,17 +153,12 @@ fn apply_single_index<'data, 'borrow>(
     entry: &'borrow mut Value<'data>,
     index: &Index<'data>,
 ) -> anyhow::Result<&'borrow mut Value<'data>> {
-    match index {
-        Index::Numeric(idx_str) => {
-            let idx: usize = idx_str
-                .parse()
-                .with_context(|| format!("Invalid array index: {idx_str}"))?;
-            entry
-                .as_array_mut()
-                .with_context(|| "Expected array")?
-                .get_mut(idx)
-                .with_context(|| format!("Array index out of bounds: {idx}"))
-        }
+    match *index {
+        Index::Numeric(idx) => entry
+            .as_array_mut()
+            .with_context(|| "Expected array")?
+            .get_mut(idx)
+            .with_context(|| format!("Array index out of bounds: {idx}")),
         Index::String(key) => entry
             .as_object_mut()
             .with_context(|| "Expected object")?
