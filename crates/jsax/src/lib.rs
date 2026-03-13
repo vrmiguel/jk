@@ -14,6 +14,8 @@ pub enum Error {
     TrailingComma,
     #[error("Expected comma or ]")]
     ExpectedCommaOrClose,
+    #[error("Unexpected EOF: {0} unclosed container(s)")]
+    UnexpectedEof(usize),
 }
 
 #[derive(Debug)]
@@ -168,6 +170,9 @@ impl<'source> Parser<'source> {
                     // if what we found was the backslash,
                     // then skip both the escape and the escaped character
                     self.pos += 2;
+                    if self.pos > self.bytes.len() {
+                        return Err(Error::Unexpected("unterminated string".to_string()));
+                    }
                 }
                 None => return Err(Error::Unexpected("unterminated string".to_string())),
             }
@@ -261,6 +266,10 @@ impl<'source> Parser<'source> {
             self.skip_whitespace();
 
             let Some(byte) = self.peek() else {
+                let depth = self.context.len();
+                if depth > 0 {
+                    return Err(Error::UnexpectedEof(depth));
+                }
                 return Ok(None);
             };
 
