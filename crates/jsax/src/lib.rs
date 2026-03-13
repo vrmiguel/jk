@@ -1,5 +1,7 @@
 use std::ops::Range;
 
+use memchr::memchr2;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("I/O error: {0}")]
@@ -35,13 +37,13 @@ pub enum Context {
 pub enum ObjNextToken {
     /// After `{`, can see empty object or key
     KeyOrClose,
-    /// After key, must see the `:` token
+    /// After key, must find the `:` token
     Colon,
-    /// After :, must see a value
+    /// After :, must find a value
     Value,
-    /// After value, can see `,` or `}`
+    /// After value, can find `,` or `}`
     CommaOrClose,
-    /// After `,`, must see a key (no trailing commas)
+    /// After `,`, must find a key (no trailing commas)
     Key,
 }
 
@@ -153,24 +155,23 @@ impl<'source> Parser<'source> {
         self.pos += 1;
 
         let start = self.pos;
-        while self.pos < self.bytes.len() {
-            match self.bytes[self.pos] {
-                b'"' => {
-                    let content = &self.input[start..self.pos];
-                    // skip closing quote
-                    self.pos += 1;
-                    return Ok(content);
-                }
-                b'\\' => {
-                    // skips both the escape and the escaped character
+        loop {
+            match memchr2(b'"', b'\\', &self.bytes[self.pos..]) {
+                Some(offset) => {
+                    self.pos += offset;
+                    if self.bytes[self.pos] == b'"' {
+                        let content = &self.input[start..self.pos];
+                        // skip closing quote
+                        self.pos += 1;
+                        return Ok(content);
+                    }
+                    // if what we found was the backslash,
+                    // then skip both the escape and the escaped character
                     self.pos += 2;
                 }
-                _ => {
-                    self.pos += 1;
-                }
+                None => return Err(Error::Unexpected("unterminated string".to_string())),
             }
         }
-        Err(Error::Unexpected("unterminated string".to_string()))
     }
 
     #[inline]
