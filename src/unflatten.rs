@@ -28,6 +28,7 @@ pub fn unflatten(input: &str, use_colors: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+// TODO(vini): get rid of unwraps here
 pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
     let mut parser = Parser::new(input);
     let mut root;
@@ -45,7 +46,7 @@ pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
         GronValue::Object => root = Value::object(),
         GronValue::Array => root = Value::array(),
         _other => {
-            // For scalar root values, just return them directly
+            // Any scalar root value we just return
             return Ok(first_line.value.to_value());
         }
     }
@@ -96,7 +97,7 @@ pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
                 continue;
             }
 
-            // Last component and no indices: direct field assignment
+            // Last component of the path and no other index to apply means it's time to assign to the parsed value
             if is_last && component.indices.is_empty() {
                 entry
                     .as_object_mut()
@@ -105,7 +106,7 @@ pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
                 break;
             }
 
-            // if in an object: navigate to current base
+            // if we're in an object, we need to navigate to current component's base
             entry = entry
                 .as_object_mut()
                 .with_context(|| "Expected object")?

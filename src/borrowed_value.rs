@@ -38,32 +38,49 @@ impl<'a> Value<'a> {
     }
 }
 
+/// ValueEvents is basically an iterator through a [`Value`], useful
+/// to be passed over to the [`Formatter`]
 pub struct ValueEvents<'a> {
-    stack: Vec<State<'a>>,
+    stack: Vec<Step<'a>>,
 }
 
-enum State<'a> {
-    EmitValue(&'a Value<'a>),
-    InObject {
-        map: &'a Map<'a>,
-        index: usize,
-    },
-    InArray {
-        array: &'a Vec<Value<'a>>,
-        index: usize,
-    },
-    EmitEndObject {
-        member_count: usize,
-    },
-    EmitEndArray {
-        len: usize,
-    },
+enum Step<'a> {
+    /// An event ready to be emitted
+    Emit(Event<'a>),
+    /// A cursor lazily going through an object's entries
+    InObject { map: &'a Map<'a>, index: usize },
+    /// A cursor lazily iterating through an array's elements
+    InArray { remaining: &'a [Value<'a>] },
 }
 
 impl<'a> ValueEvents<'a> {
     pub fn new(value: &'a Value<'a>) -> Self {
-        Self {
-            stack: vec![State::EmitValue(value)],
+        let mut this = Self {
+            stack: Vec::with_capacity(8),
+        };
+        this.push_value(value);
+        this
+    }
+
+    fn push_value(&mut self, value: &'a Value<'a>) {
+        match value {
+            Value::Null => self.stack.push(Step::Emit(Event::Null)),
+            Value::Bool(b) => self.stack.push(Step::Emit(Event::Boolean(*b))),
+            Value::Number(n) => self.stack.push(Step::Emit(Event::Number(n))),
+            Value::String(s) => self.stack.push(Step::Emit(Event::String(s))),
+            Value::Object(map) => {
+                self.stack.push(Step::Emit(Event::EndObject {
+                    member_count: map.len(),
+                }));
+                self.stack.push(Step::InObject { map, index: 0 });
+                self.stack.push(Step::Emit(Event::StartObject));
+            }
+            Value::Array(arr) => {
+                self.stack
+                    .push(Step::Emit(Event::EndArray { len: arr.len() }));
+                self.stack.push(Step::InArray { remaining: arr });
+                self.stack.push(Step::Emit(Event::StartArray));
+            }
         }
     }
 }
@@ -73,63 +90,25 @@ impl<'a> Iterator for ValueEvents<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let state = self.stack.pop()?;
-
-            match state {
-                State::EmitValue(value) => {
-                    return Some(match value {
-                        Value::Null => Event::Null,
-                        Value::Bool(b) => Event::Boolean(*b),
-                        Value::Number(n) => Event::Number(n),
-                        Value::String(s) => Event::String(s),
-                        Value::Object(map) => {
-                            let member_count = map.len();
-                            self.stack.push(State::EmitEndObject { member_count });
-                            self.stack.push(State::InObject { map, index: 0 });
-                            Event::StartObject
-                        }
-                        Value::Array(arr) => {
-                            let len = arr.len();
-                            self.stack.push(State::EmitEndArray { len });
-                            self.stack.push(State::InArray {
-                                array: arr,
-                                index: 0,
-                            });
-                            Event::StartArray
-                        }
-                    });
-                }
-
-                State::InObject { map, index } => {
-                    if let Some((key, value)) = map.get_index(index) {
-                        self.stack.push(State::InObject {
+            match self.stack.pop()? {
+                Step::Emit(event) => return Some(event),
+                Step::InObject { map, index } => {
+                    if let Some((key, val)) = map.get_index(index) {
+                        self.stack.push(Step::InObject {
                             map,
                             index: index + 1,
                         });
-                        self.stack.push(State::EmitValue(value));
+                        self.push_value(val);
                         return Some(Event::Key(key));
                     }
-                    // Will continue to pop EndObject
+                    // Continues, next iteration pops Emit(EndObject)
                 }
-
-                State::InArray { array, index } => {
-                    if let Some(value) = array.get(index) {
-                        self.stack.push(State::InArray {
-                            array,
-                            index: index + 1,
-                        });
-                        self.stack.push(State::EmitValue(value));
-                        // Will continue to emit the value
+                Step::InArray { remaining } => {
+                    if let Some((val, rest)) = remaining.split_first() {
+                        self.stack.push(Step::InArray { remaining: rest });
+                        self.push_value(val);
                     }
-                    // Will continue to pop EndArray
-                }
-
-                State::EmitEndObject { member_count } => {
-                    return Some(Event::EndObject { member_count });
-                }
-
-                State::EmitEndArray { len } => {
-                    return Some(Event::EndArray { len });
+                    // Continues, next iteration pops Emit(EndArray) or emits pushed value
                 }
             }
         }
