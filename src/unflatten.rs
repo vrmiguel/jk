@@ -28,10 +28,8 @@ pub fn unflatten(input: &str, use_colors: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-// TODO(vini): get rid of unwraps here
 pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
     let mut parser = Parser::new(input);
-    let mut root;
     let first_line = parser
         .parse_next_line()?
         .with_context(|| "The supplied file was empty!")?;
@@ -42,17 +40,13 @@ pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
         .with_context(|| "No identifier parsed")?
         .base;
 
-    match first_line.value {
-        GronValue::Object => root = Value::object(),
-        GronValue::Array => root = Value::array(),
-        _other => {
-            // Any scalar root value we just return
-            return Ok(first_line.value.to_value());
-        }
-    }
+    let mut root = match first_line.value {
+        GronValue::Object => Value::object(),
+        GronValue::Array => Value::array(),
+        _other => return Ok(first_line.value.to_value()),
+    };
 
     while let Some(GronLine { identifier, value }) = parser.parse_next_line()? {
-        // TODO: validate root name
         let components_amount = identifier.len();
         let components = identifier.iter().enumerate();
 
@@ -79,20 +73,11 @@ pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
                 }
 
                 if is_last {
-                    let last_index = component.indices.last().unwrap();
-                    match last_index {
-                        Index::Numeric(idx_str) => {
-                            let idx: usize = idx_str.parse().unwrap();
-                            let arr = entry.as_array_mut().unwrap();
-                            while arr.len() <= idx {
-                                arr.push(Value::Null);
-                            }
-                            arr[idx] = value.to_value();
-                        }
-                        Index::String(key) => {
-                            entry.as_object_mut().unwrap().insert(key, value.to_value());
-                        }
-                    }
+                    let last_index = component
+                        .indices
+                        .last()
+                        .with_context(|| "Expected at least one index")?;
+                    set_at_last_index(entry, last_index, value.to_value())?;
                 }
                 continue;
             }
@@ -128,20 +113,11 @@ pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
 
             // Last component: set the value at the final index
             if is_last {
-                let last_index = component.indices.last().unwrap();
-                match last_index {
-                    Index::Numeric(idx_str) => {
-                        let idx: usize = idx_str.parse().unwrap();
-                        let arr = entry.as_array_mut().unwrap();
-                        while arr.len() <= idx {
-                            arr.push(Value::Null); // Fill gaps with null
-                        }
-                        arr[idx] = value.to_value();
-                    }
-                    Index::String(key) => {
-                        entry.as_object_mut().unwrap().insert(key, value.to_value());
-                    }
-                }
+                let last_index = component
+                    .indices
+                    .last()
+                    .with_context(|| "Expected at least one index")?;
+                set_at_last_index(entry, last_index, value.to_value())?;
             }
         }
     }
@@ -149,7 +125,34 @@ pub fn unflatten_to_value<'a>(input: &'a str) -> anyhow::Result<Value<'a>> {
     Ok(root)
 }
 
-/// Follow a single index in order to navigate
+/// Inserts `value` at the `last_index` pos
+fn set_at_last_index<'a>(
+    entry: &mut Value<'a>,
+    last_index: &Index<'a>,
+    value: Value<'a>,
+) -> anyhow::Result<()> {
+    match last_index {
+        Index::Numeric(idx_str) => {
+            let idx: usize = idx_str
+                .parse()
+                .with_context(|| format!("Invalid array index: {idx_str}"))?;
+            let arr = entry.as_array_mut().with_context(|| "Expected array")?;
+            while arr.len() <= idx {
+                arr.push(Value::Null);
+            }
+            arr[idx] = value;
+        }
+        Index::String(key) => {
+            entry
+                .as_object_mut()
+                .with_context(|| "Expected object")?
+                .insert(key, value);
+        }
+    }
+    Ok(())
+}
+
+/// Follow a single index in order to navigate deeper into the tree.
 fn apply_single_index<'data, 'borrow>(
     entry: &'borrow mut Value<'data>,
     index: &Index<'data>,
@@ -158,18 +161,18 @@ fn apply_single_index<'data, 'borrow>(
         Index::Numeric(idx_str) => {
             let idx: usize = idx_str
                 .parse()
-                .with_context(|| format!("Invalid array index: {}", idx_str))?;
+                .with_context(|| format!("Invalid array index: {idx_str}"))?;
             entry
                 .as_array_mut()
                 .with_context(|| "Expected array")?
                 .get_mut(idx)
-                .with_context(|| format!("Array index out of bounds: {}", idx))
+                .with_context(|| format!("Array index out of bounds: {idx}"))
         }
         Index::String(key) => entry
             .as_object_mut()
             .with_context(|| "Expected object")?
             .get_mut(key)
-            .with_context(|| format!("Object key not found: {}", key)),
+            .with_context(|| format!("Object key not found: {key}")),
     }
 }
 
