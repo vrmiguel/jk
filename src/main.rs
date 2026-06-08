@@ -1,4 +1,5 @@
 use std::{
+    fs,
     io::{self, BufWriter, Write},
     process::ExitCode,
 };
@@ -60,21 +61,43 @@ fn run() -> anyhow::Result<()> {
             let source = source.load()?;
             jk::unflatten::unflatten(source.as_str()?, should_use_colors())?;
         }
-        Command::Fmt => {
-            let source = source.load()?;
+        Command::Fmt { in_place } => {
+            if in_place {
+                let path = match source {
+                    source::Source::File(path) => path,
+                    source::Source::Stdin => {
+                        return Err(anyhow::anyhow!("--in-place requires a file path"));
+                    }
+                };
 
-            let use_colors = should_use_colors();
+                let output = {
+                    let source = source::Source::File(path.clone()).load()?;
+                    let mut output = Vec::new();
+                    jk::fmt::Formatter::new_plain(Parser::new(source.as_str()?))
+                        .format_to(&mut output)?;
+                    output
+                };
 
-            let stdout = io::stdout();
-            let mut writer = BufWriter::new(stdout.lock());
-            if use_colors {
-                jk::fmt::Formatter::new_colored(Parser::new(source.as_str()?))
-                    .format_to(&mut writer)?;
+                fs::write(&path, output)?;
             } else {
-                jk::fmt::Formatter::new_plain(Parser::new(source.as_str()?))
-                    .format_to(&mut writer)?;
+                let source = source.load()?;
+
+                let use_colors = should_use_colors();
+
+                let stdout = io::stdout();
+                let mut writer = BufWriter::new(stdout.lock());
+                if use_colors {
+                    jk::fmt::Formatter::new_colored(Parser::new(source.as_str()?))
+                        .format_to(&mut writer)?;
+                } else {
+                    jk::fmt::Formatter::new_plain(Parser::new(source.as_str()?))
+                        .format_to(&mut writer)?;
+                }
+                if use_colors {
+                    writer.write_all(b"\n")?;
+                }
+                writer.flush()?;
             }
-            writer.flush()?;
         }
         Command::Schema(format) => {
             let source = source.load()?;
@@ -135,7 +158,7 @@ fn help_message() {
     println!("  [none]               Open JSON in interactive viewer (default)");
     println!("  flatten              Flatten JSON to dot-notation format");
     println!("  unflatten            Convert flattened format back to JSON");
-    println!("  fmt                  Format/pretty-print JSON");
+    println!("  fmt [-i|--in-place]  Format/pretty-print JSON");
     println!("  schema <format>      Generate types from JSON schema");
     println!("                       Formats: typescript (ts), rust (rs)");
     println!("  help                 Show this help message");
@@ -146,4 +169,5 @@ fn help_message() {
     println!("  jk schema typescript data.json  # Generate TypeScript types");
     println!("  jk schema rust data.json        # Generate Rust types");
     println!("  cat data.json | jk fmt          # Format JSON from stdin");
+    println!("  jk fmt -i data.json             # Format JSON in place");
 }
