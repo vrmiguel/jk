@@ -1,5 +1,5 @@
 use std::{
-    fs::File,
+    fs::{self, File},
     io::{self, Read},
     path::PathBuf,
     str,
@@ -15,15 +15,15 @@ pub enum Source {
 }
 
 pub enum LoadedSource {
-    Stdin(Vec<u8>),
-    File(Mmap),
+    Bytes(Vec<u8>),
+    Mmap(Mmap),
 }
 
 impl LoadedSource {
     pub fn as_bytes(&self) -> &[u8] {
         match self {
-            LoadedSource::Stdin(bytes) => bytes,
-            LoadedSource::File(mmap) => mmap,
+            LoadedSource::Bytes(bytes) => bytes,
+            LoadedSource::Mmap(mmap) => mmap,
         }
     }
 
@@ -38,14 +38,25 @@ impl Source {
             Source::Stdin => {
                 let mut buf = Vec::with_capacity(1024);
                 io::stdin().lock().read_to_end(&mut buf).unwrap();
-                Ok(LoadedSource::Stdin(buf))
+                Ok(LoadedSource::Bytes(buf))
             }
             Source::File(path) => {
                 let file = File::open(&path)
                     .with_context(|| format!("Failed to open {}", path.display()))?;
                 let mmap = unsafe { MmapOptions::new().map(&file)? };
 
-                Ok(LoadedSource::File(mmap))
+                Ok(LoadedSource::Mmap(mmap))
+            }
+        }
+    }
+
+    pub fn load_into_memory(self) -> anyhow::Result<LoadedSource> {
+        match self {
+            Source::Stdin => self.load(),
+            Source::File(path) => {
+                let bytes = fs::read(&path)
+                    .with_context(|| format!("Failed to read {}", path.display()))?;
+                Ok(LoadedSource::Bytes(bytes))
             }
         }
     }

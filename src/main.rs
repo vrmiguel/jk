@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{self, BufWriter, Write},
+    io::{self, BufWriter, IsTerminal, Write},
     process::ExitCode,
 };
 
@@ -15,6 +15,7 @@ use syntect::{
 
 use crate::{
     cli::{Command, CommandParseResult, Language},
+    source::{LoadedSource, Source},
     utils::should_use_colors,
 };
 
@@ -51,27 +52,27 @@ fn run() -> anyhow::Result<()> {
             viewer::start_viewer(&tree)?;
         }
         Command::Flatten => {
-            let source = source.load()?;
+            let source = load_for_stdout(source)?;
 
             let stdout = io::stdout();
             let writer = BufWriter::new(stdout.lock());
             jk::flatten::flatten(source.as_str()?, writer)?;
         }
         Command::Unflatten => {
-            let source = source.load()?;
+            let source = load_for_stdout(source)?;
             jk::unflatten::unflatten(source.as_str()?, should_use_colors())?;
         }
         Command::Fmt { in_place } => {
             if in_place {
                 let path = match source {
-                    source::Source::File(path) => path,
-                    source::Source::Stdin => {
+                    Source::File(path) => path,
+                    Source::Stdin => {
                         return Err(anyhow::anyhow!("--in-place requires a file path"));
                     }
                 };
 
                 let output = {
-                    let source = source::Source::File(path.clone()).load()?;
+                    let source = Source::File(path.clone()).load_into_memory()?;
                     let mut output = Vec::new();
                     jk::fmt::Formatter::new_plain(Parser::new(source.as_str()?))
                         .format_to(&mut output)?;
@@ -80,7 +81,7 @@ fn run() -> anyhow::Result<()> {
 
                 fs::write(&path, output)?;
             } else {
-                let source = source.load()?;
+                let source = load_for_stdout(source)?;
 
                 let use_colors = should_use_colors();
 
@@ -100,7 +101,7 @@ fn run() -> anyhow::Result<()> {
             }
         }
         Command::Schema(format) => {
-            let source = source.load()?;
+            let source = load_for_stdout(source)?;
             let schema = jk::schema::infer::infer_schema(source.as_str()?)?;
 
             let output = match format {
@@ -120,6 +121,14 @@ fn run() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn load_for_stdout(source: Source) -> anyhow::Result<LoadedSource> {
+    if io::stdout().is_terminal() {
+        source.load()
+    } else {
+        source.load_into_memory()
+    }
 }
 
 // TODO(vrmiguel): this is probably terrible, gotta figure out how to use syntect better
