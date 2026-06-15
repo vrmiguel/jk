@@ -62,15 +62,8 @@ fn run() -> anyhow::Result<()> {
             let source = load_for_stdout(source)?;
             jk::unflatten::unflatten(source.as_str()?, should_use_colors())?;
         }
-        Command::Fmt { in_place } => {
-            if in_place {
-                let path = match source {
-                    Source::File(path) => path,
-                    Source::Stdin => {
-                        return Err(anyhow::anyhow!("--in-place requires a file path"));
-                    }
-                };
-
+        Command::Fmt => match source {
+            Source::File(path) => {
                 let output = {
                     let source = Source::File(path.clone()).load_into_memory()?;
                     let mut output = Vec::new();
@@ -80,7 +73,8 @@ fn run() -> anyhow::Result<()> {
                 };
 
                 fs::write(&path, output)?;
-            } else {
+            }
+            Source::Stdin => {
                 let source = load_for_stdout(source)?;
 
                 let use_colors = should_use_colors();
@@ -99,7 +93,7 @@ fn run() -> anyhow::Result<()> {
                 }
                 writer.flush()?;
             }
-        }
+        },
         Command::Schema(format) => {
             let source = load_for_stdout(source)?;
             let schema = jk::schema::infer::infer_schema(source.as_str()?)?;
@@ -167,7 +161,7 @@ fn help_message() {
     println!("  [none]               Open JSON in interactive viewer (default)");
     println!("  flatten              Flatten JSON to dot-notation format");
     println!("  unflatten            Convert flattened format back to JSON");
-    println!("  fmt [-i|--in-place]  Format/pretty-print JSON");
+    println!("  fmt                  Format/pretty-print JSON");
     println!("  schema <format>      Generate types from JSON schema");
     println!("                       Formats: typescript (ts), rust (rs)");
     println!("  help                 Show this help message");
@@ -178,5 +172,5 @@ fn help_message() {
     println!("  jk schema typescript data.json  # Generate TypeScript types");
     println!("  jk schema rust data.json        # Generate Rust types");
     println!("  cat data.json | jk fmt          # Format JSON from stdin");
-    println!("  jk fmt -i data.json             # Format JSON in place");
+    println!("  jk fmt data.json                # Format JSON in place");
 }

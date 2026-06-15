@@ -7,7 +7,7 @@ pub enum Command {
     View,
     Flatten,
     Unflatten,
-    Fmt { in_place: bool },
+    Fmt,
     Schema(Language),
     // TODO: this could be removed?
     Help,
@@ -37,7 +37,6 @@ fn parse_command_pure(
 ) -> anyhow::Result<CommandParseResult> {
     let mut command = None;
     let mut path = None;
-    let mut fmt_in_place = false;
 
     // TODO: if `piped_input`, conflict if `path` is provided? just ignore the piped input?
     while let Some(arg) = parser.next()? {
@@ -49,7 +48,7 @@ fn parse_command_pure(
                 command = Some(Command::Unflatten);
             }
             Arg::Value(value) if value == "fmt" && command.is_none() => {
-                command = Some(Command::Fmt { in_place: false });
+                command = Some(Command::Fmt);
             }
             Arg::Value(value) if value == "schema" && command.is_none() => {
                 // Next argument should be the format (typescript, rust, etc.)
@@ -74,9 +73,6 @@ fn parse_command_pure(
             Arg::Value(value) if value == "help" && command.is_none() => {
                 command = Some(Command::Help);
             }
-            Arg::Short('i') | Arg::Long("in-place") => {
-                fmt_in_place = true;
-            }
             Arg::Value(value) if path.is_none() => {
                 path = Some(value);
             }
@@ -86,7 +82,7 @@ fn parse_command_pure(
 
     // This is a bit unsightly, but the idea is to allow the `path` argument to not be required if the input is piped.
     // Also, if no specific command is provided, the default is to view the JSON interactively
-    let (mut command, source) = match (command, path) {
+    let (command, source) = match (command, path) {
         (Some(Command::Help), _) => {
             return Ok(CommandParseResult::Help);
         }
@@ -104,13 +100,6 @@ fn parse_command_pure(
         (Some(command), None) => (command, Source::Stdin),
         (None, None) => (Command::View, Source::Stdin),
     };
-
-    if fmt_in_place {
-        match &mut command {
-            Command::Fmt { in_place } => *in_place = true,
-            _ => return Err(anyhow::anyhow!("--in-place is only supported for fmt")),
-        }
-    }
 
     Ok(CommandParseResult::Command(command, source))
 }
@@ -175,7 +164,7 @@ mod tests {
         let result = parse_command_pure(false, parser).unwrap();
 
         match result {
-            CommandParseResult::Command(Command::Fmt { in_place: false }, Source::File(path)) => {
+            CommandParseResult::Command(Command::Fmt, Source::File(path)) => {
                 assert_eq!(path, PathBuf::from("data.json"));
             }
             _ => panic!("Expected Fmt command with file source"),
@@ -188,43 +177,9 @@ mod tests {
         let result = parse_command_pure(true, parser).unwrap();
 
         match result {
-            CommandParseResult::Command(Command::Fmt { in_place: false }, Source::Stdin) => {}
+            CommandParseResult::Command(Command::Fmt, Source::Stdin) => {}
             _ => panic!("Expected Fmt command with stdin source"),
         }
-    }
-
-    #[test]
-    fn test_fmt_in_place_long() {
-        let parser = lexopt::Parser::from_args(&["fmt", "--in-place", "data.json"]);
-        let result = parse_command_pure(false, parser).unwrap();
-
-        match result {
-            CommandParseResult::Command(Command::Fmt { in_place: true }, Source::File(path)) => {
-                assert_eq!(path, PathBuf::from("data.json"));
-            }
-            _ => panic!("Expected in-place Fmt command with file source"),
-        }
-    }
-
-    #[test]
-    fn test_fmt_in_place_short() {
-        let parser = lexopt::Parser::from_args(&["fmt", "-i", "data.json"]);
-        let result = parse_command_pure(false, parser).unwrap();
-
-        match result {
-            CommandParseResult::Command(Command::Fmt { in_place: true }, Source::File(path)) => {
-                assert_eq!(path, PathBuf::from("data.json"));
-            }
-            _ => panic!("Expected in-place Fmt command with file source"),
-        }
-    }
-
-    #[test]
-    fn test_in_place_non_fmt_is_error() {
-        let parser = lexopt::Parser::from_args(&["flatten", "-i", "data.json"]);
-        let result = parse_command_pure(false, parser);
-
-        assert!(result.is_err());
     }
 
     #[test]
