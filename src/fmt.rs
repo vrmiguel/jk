@@ -323,6 +323,7 @@ impl<S: EventSource, const USE_COLORS: bool> Formatter<S, USE_COLORS> {
                 },
             }
         }
+        writer.newline()?;
         Ok(())
     }
 }
@@ -360,7 +361,7 @@ mod tests {
     fn sci_not() {
         assert_eq!(
             format_to_string(r#"{"sci": 1e10}"#),
-            "{\n  \"sci\": 1e10\n}"
+            "{\n  \"sci\": 1e10\n}\n"
         );
     }
 
@@ -408,7 +409,7 @@ mod tests {
 
         for test_case in test_cases {
             let ours = format_to_string(test_case);
-            let theirs = format_to_string_serde(test_case);
+            let theirs = format!("{}\n", format_to_string_serde(test_case));
 
             if ours != theirs {
                 panic!(
@@ -423,25 +424,25 @@ mod tests {
         let test_cases = [
             (
                 r#"{"key": "hello\"world"}"#,
-                "{\n  \"key\": \"hello\\\"world\"\n}",
+                "{\n  \"key\": \"hello\\\"world\"\n}\n",
             ),
             (
                 r#"{"path": "C:\\Users\\file.txt"}"#,
-                "{\n  \"path\": \"C:\\\\Users\\\\file.txt\"\n}",
+                "{\n  \"path\": \"C:\\\\Users\\\\file.txt\"\n}\n",
             ),
             (
                 r#"{"text": "line1\nline2"}"#,
-                "{\n  \"text\": \"line1\\nline2\"\n}",
+                "{\n  \"text\": \"line1\\nline2\"\n}\n",
             ),
             (
                 r#"{"text": "tab\there"}"#,
-                "{\n  \"text\": \"tab\\there\"\n}",
+                "{\n  \"text\": \"tab\\there\"\n}\n",
             ),
             (
                 r#"{"msg": "She said \"Hi!\"\n"}"#,
-                "{\n  \"msg\": \"She said \\\"Hi!\\\"\\n\"\n}",
+                "{\n  \"msg\": \"She said \\\"Hi!\\\"\\n\"\n}\n",
             ),
-            (r#"["quote\"here"]"#, "[\n  \"quote\\\"here\"\n]"),
+            (r#"["quote\"here"]"#, "[\n  \"quote\\\"here\"\n]\n"),
         ];
 
         for (input, expected) in test_cases {
