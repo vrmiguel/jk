@@ -74,9 +74,7 @@ fn run() -> anyhow::Result<()> {
                 jk::fmt::Formatter::new_plain(Parser::new(source.as_str()?))
                     .format_to(&mut writer)?;
             }
-            if use_colors {
-                writer.write_all(b"\n")?;
-            }
+            writer.write_all(b"\n")?;
             writer.flush()?;
         }
         Command::Schema(format) => {
