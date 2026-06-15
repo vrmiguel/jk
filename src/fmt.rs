@@ -323,6 +323,7 @@ impl<S: EventSource, const USE_COLORS: bool> Formatter<S, USE_COLORS> {
                 },
             }
         }
+        writer.newline()?;
         Ok(())
     }
 }
