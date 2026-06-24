@@ -7,10 +7,23 @@ pub enum Command {
     View,
     Flatten,
     Unflatten,
-    Fmt,
+    Fmt { write: bool },
     Schema(Language),
     // TODO: this could be removed?
     Help,
+}
+
+impl Command {
+    fn name(&self) -> &'static str {
+        match self {
+            Command::View => "view",
+            Command::Flatten => "flatten",
+            Command::Unflatten => "unflatten",
+            Command::Fmt { .. } => "fmt",
+            Command::Schema(_) => "schema",
+            Command::Help => "help",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -37,6 +50,7 @@ fn parse_command_pure(
 ) -> anyhow::Result<CommandParseResult> {
     let mut command = None;
     let mut path = None;
+    let mut fmt_write = false;
 
     // TODO: if `piped_input`, conflict if `path` is provided? just ignore the piped input?
     while let Some(arg) = parser.next()? {
@@ -48,7 +62,7 @@ fn parse_command_pure(
                 command = Some(Command::Unflatten);
             }
             Arg::Value(value) if value == "fmt" && command.is_none() => {
-                command = Some(Command::Fmt);
+                command = Some(Command::Fmt { write: false });
             }
             Arg::Value(value) if value == "schema" && command.is_none() => {
                 // Next argument should be the format (typescript, rust, etc.)
@@ -76,7 +90,17 @@ fn parse_command_pure(
             Arg::Value(value) if path.is_none() => {
                 path = Some(value);
             }
+            Arg::Short('w') | Arg::Long("write") => {
+                fmt_write = true;
+            }
             _ => return Err(arg.unexpected().into()),
+        }
+    }
+
+    if fmt_write {
+        match &mut command {
+            Some(Command::Fmt { write }) => *write = true,
+            _ => return Err(anyhow::anyhow!("--write is only supported with `fmt`")),
         }
     }
 
@@ -93,13 +117,17 @@ fn parse_command_pure(
         (None, Some(path)) => (Command::View, Source::File(path.into())),
         (Some(command), None) if !piped_input => {
             return Err(lexopt::Error::MissingValue {
-                option: Some(format!("{:?}", command)),
+                option: Some(command.name().to_string()),
             }
             .into());
         }
         (Some(command), None) => (command, Source::Stdin),
         (None, None) => (Command::View, Source::Stdin),
     };
+
+    if matches!(command, Command::Fmt { write: true }) && matches!(source, Source::Stdin) {
+        return Err(anyhow::anyhow!("--write requires a file path"));
+    }
 
     Ok(CommandParseResult::Command(command, source))
 }
@@ -164,7 +192,7 @@ mod tests {
         let result = parse_command_pure(false, parser).unwrap();
 
         match result {
-            CommandParseResult::Command(Command::Fmt, Source::File(path)) => {
+            CommandParseResult::Command(Command::Fmt { write: false }, Source::File(path)) => {
                 assert_eq!(path, PathBuf::from("data.json"));
             }
             _ => panic!("Expected Fmt command with file source"),
@@ -177,9 +205,43 @@ mod tests {
         let result = parse_command_pure(true, parser).unwrap();
 
         match result {
-            CommandParseResult::Command(Command::Fmt, Source::Stdin) => {}
+            CommandParseResult::Command(Command::Fmt { write: false }, Source::Stdin) => {}
             _ => panic!("Expected Fmt command with stdin source"),
         }
+    }
+
+    #[test]
+    fn test_fmt_write_file_short() {
+        let parser = lexopt::Parser::from_args(&["fmt", "-w", "data.json"]);
+        let result = parse_command_pure(false, parser).unwrap();
+
+        match result {
+            CommandParseResult::Command(Command::Fmt { write: true }, Source::File(path)) => {
+                assert_eq!(path, PathBuf::from("data.json"));
+            }
+            _ => panic!("Expected Fmt command with write option and file source"),
+        }
+    }
+
+    #[test]
+    fn test_fmt_write_file_long() {
+        let parser = lexopt::Parser::from_args(&["fmt", "--write", "data.json"]);
+        let result = parse_command_pure(false, parser).unwrap();
+
+        match result {
+            CommandParseResult::Command(Command::Fmt { write: true }, Source::File(path)) => {
+                assert_eq!(path, PathBuf::from("data.json"));
+            }
+            _ => panic!("Expected Fmt command with write option and file source"),
+        }
+    }
+
+    #[test]
+    fn test_fmt_write_rejects_stdin() {
+        let parser = lexopt::Parser::from_args(&["fmt", "--write"]);
+        let result = parse_command_pure(true, parser);
+
+        assert!(result.is_err());
     }
 
     #[test]

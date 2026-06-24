@@ -1,10 +1,9 @@
 use std::{
-    io::{self, BufWriter, Write},
+    io::{self, BufWriter},
     process::ExitCode,
 };
 
 use jk::fold_tree::KeyedJsonElement;
-use jsax::Parser;
 use syntect::{
     easy::HighlightLines,
     highlighting::{Style, ThemeSet},
@@ -18,6 +17,8 @@ use crate::{
 };
 
 mod cli;
+#[path = "fmt_cmd.rs"]
+mod fmt;
 mod source;
 mod utils;
 /// The interactive TUI JSON viewer
@@ -60,21 +61,8 @@ fn run() -> anyhow::Result<()> {
             let source = source.load()?;
             jk::unflatten::unflatten(source.as_str()?, should_use_colors())?;
         }
-        Command::Fmt => {
-            let source = source.load()?;
-
-            let use_colors = should_use_colors();
-
-            let stdout = io::stdout();
-            let mut writer = BufWriter::new(stdout.lock());
-            if use_colors {
-                jk::fmt::Formatter::new_colored(Parser::new(source.as_str()?))
-                    .format_to(&mut writer)?;
-            } else {
-                jk::fmt::Formatter::new_plain(Parser::new(source.as_str()?))
-                    .format_to(&mut writer)?;
-            }
-            writer.flush()?;
+        Command::Fmt { write } => {
+            fmt::run(source, write)?;
         }
         Command::Schema(format) => {
             let source = source.load()?;
@@ -135,7 +123,7 @@ fn help_message() {
     println!("  [none]               Open JSON in interactive viewer (default)");
     println!("  flatten              Flatten JSON to dot-notation format");
     println!("  unflatten            Convert flattened format back to JSON");
-    println!("  fmt                  Format/pretty-print JSON");
+    println!("  fmt [-w|--write]     Format/pretty-print JSON");
     println!("  schema <format>      Generate types from JSON schema");
     println!("                       Formats: typescript (ts), rust (rs)");
     println!("  help                 Show this help message");
@@ -146,4 +134,5 @@ fn help_message() {
     println!("  jk schema typescript data.json  # Generate TypeScript types");
     println!("  jk schema rust data.json        # Generate Rust types");
     println!("  cat data.json | jk fmt          # Format JSON from stdin");
+    println!("  jk fmt --write data.json        # Format JSON in-place");
 }
